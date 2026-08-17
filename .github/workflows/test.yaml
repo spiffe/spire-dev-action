@@ -1,0 +1,203 @@
+name: test
+
+on:
+  pull_request:
+    types: [synchronize, opened, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything that needs neither a host to modify nor a cluster. Runs first and
+  # fastest, and catches the whole class of bug where the values or manifests this
+  # action generates are not what the chart or SPIRE accepts.
+  offline:
+    name: offline checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        env:
+          # Sourced paths are resolved at runtime, so following them statically
+          # produces only noise.
+          SHELLCHECK_OPTS: -e SC1091
+        with:
+          severity: warning
+          format: gcc
+
+      - uses: azure/setup-helm@v4
+
+      - name: entry renderer golden tests
+        run: tests/entries/run-tests.sh
+
+      - name: k8s values render against the real chart
+        run: tests/k8s-values/run-tests.sh
+
+      - name: the golden files are up to date
+        run: |
+          tests/entries/run-tests.sh --update >/dev/null
+          if ! git diff --quiet -- tests/entries/golden; then
+            echo "::error::the golden files are stale; run tests/entries/run-tests.sh --update and commit"
+            git diff -- tests/entries/golden
+            exit 1
+          fi
+
+  # One job per scenario directory, so a new scenario needs no workflow change.
+  # Mirrors the discovery pattern the reference repos use.
+  scenarios:
+    name: build scenario matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      host: ${{ steps.find.outputs.host }}
+      k8s: ${{ steps.find.outputs.k8s }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        run: |
+          for kind in host k8s; do
+            found="$(find "tests/scenarios/${kind}" -maxdepth 2 -type f -name run-tests.sh \
+              -exec dirname {} \; 2>/dev/null | sort)"
+            json="$(printf '%s' "${found}" | jq -c --slurp --raw-input \
+              'split("\n") | map(select(. != ""))')"
+            echo "${kind}=${json}" >>"$GITHUB_OUTPUT"
+            echo "${kind}: ${json}"
+          done
+
+  # Host mode genuinely modifies the runner: it installs packages, writes under
+  # /etc and starts services. That is only acceptable because each job gets a
+  # fresh disposable VM.
+  host:
+    name: host / ${{ matrix.scenario }}
+    needs: [offline, scenarios]
+    if: needs.scenarios.outputs.host != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJson(needs.scenarios.outputs.host) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: run scenario
+        run: ${{ matrix.scenario }}/run-tests.sh
+
+      - name: collect diagnostics
+        if: always()
+        uses: ./diagnostics
+        with:
+          mode: host
+          artifact-name: diagnostics-host-${{ strategy.job-index }}
+
+  # The scenarios call scripts/spire-dev.sh directly, so this is what proves
+  # action.yml's inputs and outputs are wired up: it uses the action the way a
+  # consumer would and consumes its outputs.
+  action-interface:
+    name: action interface
+    needs: [offline]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: deploy SPIRE
+        id: spire
+        uses: ./
+        with:
+          mode: host
+          trust-domain: action.test
+          entries: |
+            - spiffeID: consumer
+              selectors:
+                - systemd:id:consumer-app.service
+
+      - name: the outputs are populated
+        env:
+          TRUST_DOMAIN: ${{ steps.spire.outputs.trust-domain }}
+          AGENT_SOCKET: ${{ steps.spire.outputs.agent-socket-path }}
+          SERVER_SOCKET: ${{ steps.spire.outputs.server-socket-path }}
+          AGENT_ID: ${{ steps.spire.outputs.agent-spiffe-id }}
+          BUNDLE: ${{ steps.spire.outputs.bundle-file }}
+        run: |
+          set -eu
+          [ "${TRUST_DOMAIN}" = "action.test" ] || { echo "::error::trust-domain output wrong: ${TRUST_DOMAIN}"; exit 1; }
+          [ "${AGENT_ID}" = "spiffe://action.test/agent/node1" ] || { echo "::error::agent-spiffe-id output wrong: ${AGENT_ID}"; exit 1; }
+          test -S "${AGENT_SOCKET}" || { echo "::error::agent socket missing: ${AGENT_SOCKET}"; exit 1; }
+          test -S "${SERVER_SOCKET}" || { echo "::error::server socket missing: ${SERVER_SOCKET}"; exit 1; }
+          test -s "${BUNDLE}" || { echo "::error::bundle file missing: ${BUNDLE}"; exit 1; }
+          echo "all outputs populated"
+
+      - name: a consumer's application gets an SVID with no extra configuration
+        # SPIFFE_ENDPOINT_SOCKET is exported by the deploy step, so a SPIFFE-aware
+        # application needs no configuration at all. Verified here through the same
+        # transient-unit mechanism the README documents.
+        run: |
+          set -eu
+          echo "SPIFFE_ENDPOINT_SOCKET=${SPIFFE_ENDPOINT_SOCKET}"
+          ID="$(sudo timeout 20 systemd-run --wait --pipe --unit=consumer-app \
+            spire-agent api fetch jwt -audience test \
+            -socketPath "${{ steps.spire.outputs.agent-socket-path }}" -output json \
+            | jq -r '.[0].svids[0].spiffe_id')"
+          [ "${ID}" = "spiffe://action.test/consumer" ] || { echo "::error::got ${ID}"; exit 1; }
+          echo "the workload was issued ${ID}"
+
+      - name: collect diagnostics
+        if: always()
+        uses: ./diagnostics
+        with:
+          mode: host
+          artifact-name: diagnostics-action-interface
+
+      - name: tear down
+        uses: ./teardown
+        with:
+          mode: host
+
+      - name: teardown actually stopped SPIRE
+        run: |
+          if sudo systemctl is-active --quiet spire-server@main; then
+            echo "::error::the server is still running after teardown"
+            exit 1
+          fi
+          echo "SPIRE was stopped"
+
+  k8s:
+    name: k8s / ${{ matrix.scenario }} / ${{ matrix.k8s }}
+    needs: [offline, scenarios]
+    if: needs.scenarios.outputs.k8s != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJson(needs.scenarios.outputs.k8s) }}
+        # Deliberately more than one version: the apiserver patches this action
+        # chooses not to carry are the kind of thing that breaks on exactly one
+        # Kubernetes version, and a single-version matrix would not notice.
+        k8s: [v1.33.7, v1.34.3, v1.35.1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+
+      - name: run scenario
+        env:
+          SPIRE_DEV_K8S_VERSION: ${{ matrix.k8s }}
+        run: ${{ matrix.scenario }}/run-tests.sh
+
+      - name: collect diagnostics
+        if: always()
+        uses: ./diagnostics
+        with:
+          mode: k8s
+          artifact-name: diagnostics-k8s-${{ strategy.job-index }}

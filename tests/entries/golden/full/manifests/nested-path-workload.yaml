@@ -1,0 +1,14 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterStaticEntry
+metadata:
+  name: nested-path-workload
+spec:
+  parentID: spiffe://${SPIFFE_TRUST_DOMAIN}/agent/node1
+  spiffeID: spiffe://${SPIFFE_TRUST_DOMAIN}/nested/path/workload
+  selectors:
+    - systemd:id:worker@1.service
+  dnsNames:
+    - worker.example.test
+  federatesWith:
+    - spire-ha
+  x509SVIDTTL: 60s

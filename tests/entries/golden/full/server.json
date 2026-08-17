@@ -1,0 +1,57 @@
+{
+  "entries": [
+    {
+      "spiffe_id": "spiffe://other.test/absolute/id",
+      "parent_id": "spiffe://other.test/spire/server",
+      "selectors": [
+        {
+          "type": "k8s_psat",
+          "value": "namespace:default"
+        },
+        {
+          "type": "k8s_psat",
+          "value": "service_account_name:default"
+        }
+      ],
+      "dns_names": [
+        "myapp.example.test",
+        "localhost"
+      ],
+      "federates_with": [
+        "other.invalid"
+      ],
+      "admin": true,
+      "downstream": true,
+      "x509_svid_ttl": 3600,
+      "jwt_svid_ttl": 300,
+      "hint": "primary"
+    },
+    {
+      "spiffe_id": "spiffe://example.test/nested/path/workload",
+      "parent_id": "spiffe://example.test/agent/node1",
+      "selectors": [
+        {
+          "type": "systemd",
+          "value": "id:worker@1.service"
+        }
+      ],
+      "dns_names": [
+        "worker.example.test"
+      ],
+      "federates_with": [
+        "spire-ha"
+      ],
+      "x509_svid_ttl": 60
+    },
+    {
+      "spiffe_id": "spiffe://example.test/svc/api-gateway",
+      "parent_id": "spiffe://example.test/agent/node1",
+      "selectors": [
+        {
+          "type": "unix",
+          "value": "path:/usr/local/bin/api-gateway"
+        }
+      ]
+    }
+  ]
+}

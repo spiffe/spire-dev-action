@@ -1,0 +1,49 @@
+[Unit]
+# Shipped by this action rather than by the packages: the
+# spiffe-oidc-discovery-provider deb installs only the binary, with no unit and no
+# configuration. The templating and EnvironmentFile layering deliberately mirror
+# spire-examples' own spire-server@.service so that the override mechanism is the
+# same one used for every other component here.
+Description=SPIFFE OIDC Discovery Provider %i
+PartOf=spire-server.target
+After=network-online.target local-fs.target spire-server@%i.service
+Wants=network-online.target local-fs.target
+StartLimitIntervalSec=0
+
+[Service]
+WorkingDirectory=/var/lib/spire/oidc-discovery-provider/%i
+StateDirectory=spire/oidc-discovery-provider/%i
+RuntimeDirectory=spire/oidc-discovery-provider/%i
+RuntimeDirectoryPreserve=true
+EnvironmentFile=-/etc/spiffe/default-trust-domain.env
+EnvironmentFile=-/etc/spire/oidc-discovery-provider/default.env
+EnvironmentFile=-/etc/spire/oidc-discovery-provider/%i.env
+Environment=SYSTEMD_INSTANCE=%i
+ExecStart=/bin/spiffe-oidc-discovery-provider -config /etc/spire/oidc-discovery-provider/%i.conf -expandEnv
+Restart=always
+RestartSec=5s
+
+# Matches the hardening the spire-examples units apply. ProtectSystem=strict with
+# an explicit ReadWritePaths keeps the provider unable to write anywhere it has no
+# reason to.
+LockPersonality=true
+MemoryDenyWriteExecute=true
+NoNewPrivileges=true
+PrivateDevices=false
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/
+ReadWritePaths=/var/lib/spire/oidc-discovery-provider
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=spire-server.target

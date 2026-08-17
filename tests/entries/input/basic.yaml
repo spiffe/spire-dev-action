@@ -1,0 +1,4 @@
+# The common case: one workload, a relative SPIFFE ID, one selector.
+- spiffeID: myapp
+  selectors:
+    - systemd:id:myapp.service

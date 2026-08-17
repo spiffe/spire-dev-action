@@ -1,0 +1,7 @@
+# storeSVID is in the ClusterStaticEntry CRD and in the spire-server CLI JSON,
+# but the spire helm chart's clusterStaticEntries values do not accept it. Kept in
+# its own case so the helm emitter's rejection can be asserted separately from
+# the emitters that do support it.
+- spiffeID: stored/workload
+  selectors: [unix:uid:1000]
+  storeSVID: true

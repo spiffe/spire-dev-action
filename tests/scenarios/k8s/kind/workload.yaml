@@ -1,0 +1,35 @@
+# A pod standing in for the caller's application, to prove the deployment is usable
+# and not merely running.
+#
+# The workload API socket arrives through the CSI driver, which is how a real
+# application would get it: no host mount and no sidecar. The image is replaced at
+# apply time with the agent image the chart itself uses, so this never pins a
+# version that can drift from the deployment.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spire-dev-workload
+  labels:
+    app: spire-dev-workload
+spec:
+  restartPolicy: Never
+  containers:
+    - name: main
+      image: PLACEHOLDER
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          spire-agent api fetch x509 -socketPath /spiffe-workload-api/spire-agent.sock
+          spire-agent api fetch jwt -audience spire-dev-test \
+            -socketPath /spiffe-workload-api/spire-agent.sock
+      volumeMounts:
+        - name: spiffe-workload-api
+          mountPath: /spiffe-workload-api
+          readOnly: true
+  volumes:
+    - name: spiffe-workload-api
+      csi:
+        driver: csi.spiffe.io
+        readOnly: true

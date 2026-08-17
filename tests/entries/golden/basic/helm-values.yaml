@@ -1,0 +1,9 @@
+spire-server:
+  controllerManager:
+    identities:
+      clusterStaticEntries:
+        myapp:
+          parentID: spiffe://example.test/agent/node1
+          spiffeID: spiffe://example.test/myapp
+          selectors:
+            - systemd:id:myapp.service

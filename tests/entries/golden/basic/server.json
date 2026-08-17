@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "spiffe_id": "spiffe://example.test/myapp",
+      "parent_id": "spiffe://example.test/agent/node1",
+      "selectors": [
+        {
+          "type": "systemd",
+          "value": "id:myapp.service"
+        }
+      ]
+    }
+  ]
+}

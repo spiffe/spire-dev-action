@@ -1,0 +1,16 @@
+# A manifest supplied the way a caller would, to exercise the manifests-dir input.
+#
+# ${SPIFFE_TRUST_DOMAIN} is left unexpanded on purpose: the controller-manager is
+# configured with expandEnvStaticManifests and systemd supplies the value, so the
+# same manifest works against any trust domain.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterStaticEntry
+metadata:
+  name: db
+spec:
+  parentID: spiffe://${SPIFFE_TRUST_DOMAIN}/agent/node1
+  spiffeID: spiffe://${SPIFFE_TRUST_DOMAIN}/db
+  selectors:
+    - systemd:id:spire-dev-db.service
+  dnsNames:
+    - db.internal

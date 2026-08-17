@@ -1,0 +1,21 @@
+[
+  {
+    "name": "stored-workload",
+    "spiffeID": "spiffe://example.test/stored/workload",
+    "parentID": "spiffe://example.test/agent/node1",
+    "selectors": [
+      {
+        "type": "unix",
+        "value": "uid:1000"
+      }
+    ],
+    "dnsNames": [],
+    "federatesWith": [],
+    "admin": false,
+    "downstream": false,
+    "storeSVID": true,
+    "x509SVIDTTL": 0,
+    "jwtSVIDTTL": 0,
+    "hint": ""
+  }
+]

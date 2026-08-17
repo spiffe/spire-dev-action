@@ -1,0 +1,19 @@
+# Minimal kind cluster for running SPIRE under test.
+#
+# Deliberately minimal. The reference configuration in helm-charts-hardened patches
+# the API server with service-account-issuer=api,spire-agent and
+# api-audiences=api,spire-server; those are not reproduced here. They are a legacy
+# of an older k8s_psat node attestor (that patch block still declares
+# kubeadm.k8s.io/v1beta2), and spire-identity-exchange's kind configuration omits
+# them entirely while attesting successfully. If psat attestation ever fails on a
+# particular Kubernetes version, add them back deliberately rather than carrying
+# them by default.
+#
+# A worker node is included rather than running single-node so that the agent
+# DaemonSet schedules without depending on how kind taints control-plane nodes.
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
