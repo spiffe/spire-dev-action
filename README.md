@@ -247,7 +247,7 @@ notable outputs:
 | Output | Mode | Use |
 |---|---|---|
 | `agent-socket-path` | host | The workload API socket. Also exported as `SPIFFE_ENDPOINT_SOCKET`. |
-| `server-socket-path` | host | For `spire-server` CLI calls. |
+| `server-socket-path` | host | For `spire-server` CLI calls. Needs `sudo`: SPIRE creates this socket's directory root-owned and mode `0750`, so an unprivileged process cannot even stat it. |
 | `csi-driver-name` | k8s | Put in a pod spec to mount the workload API. |
 | `server-pod` | k8s | For `spire-server` CLI calls via `kubectl exec`. |
 | `bundle-file` | both | The trust bundle in PEM form, for verifying SVIDs out of band. |

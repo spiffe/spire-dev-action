@@ -133,8 +133,13 @@ jobs:
           set -eu
           [ "${TRUST_DOMAIN}" = "action.test" ] || { echo "::error::trust-domain output wrong: ${TRUST_DOMAIN}"; exit 1; }
           [ "${AGENT_ID}" = "spiffe://action.test/agent/node1" ] || { echo "::error::agent-spiffe-id output wrong: ${AGENT_ID}"; exit 1; }
+          # The agent's socket is deliberately world-reachable: that is how a
+          # workload uses it.
           test -S "${AGENT_SOCKET}" || { echo "::error::agent socket missing: ${AGENT_SOCKET}"; exit 1; }
-          test -S "${SERVER_SOCKET}" || { echo "::error::server socket missing: ${SERVER_SOCKET}"; exit 1; }
+          # The server's is not. SPIRE creates the private API socket's directory
+          # mode 0750 owned by root, so an unprivileged stat cannot traverse into
+          # it and reports the socket as absent even when it is there.
+          sudo test -S "${SERVER_SOCKET}" || { echo "::error::server socket missing: ${SERVER_SOCKET}"; exit 1; }
           test -s "${BUNDLE}" || { echo "::error::bundle file missing: ${BUNDLE}"; exit 1; }
           echo "all outputs populated"
 

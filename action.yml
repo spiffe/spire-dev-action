@@ -111,7 +111,7 @@ outputs:
     description: 'host mode: path to the agent workload API socket. Also exported as SPIFFE_ENDPOINT_SOCKET for later steps.'
     value: ${{ steps.deploy.outputs.agent-socket-path }}
   server-socket-path:
-    description: 'host mode: path to the server API socket, for spire-server CLI calls.'
+    description: 'host mode: path to the server API socket, for spire-server CLI calls. Requires root: SPIRE creates this socket directory root-owned and mode 0750, so an unprivileged process cannot stat it.'
     value: ${{ steps.deploy.outputs.server-socket-path }}
   admin-socket-path:
     description: 'host mode: path to the agent admin socket, for the delegated identity API.'

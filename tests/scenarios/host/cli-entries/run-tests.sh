@@ -37,7 +37,10 @@ SERVER_SOCK="/run/spire/server/sockets/main/private/api.sock"
 
 echo
 echo "== the deployment is up"
-check "the server socket exists" test -S "${SERVER_SOCK}"
+# sudo for the server socket: SPIRE creates the private API socket's directory
+# mode 0750 owned by root, so an unprivileged stat cannot traverse into it. The
+# agent's public socket is reachable by anyone, which is the point of it.
+check "the server socket exists" sudo test -S "${SERVER_SOCK}"
 check "the agent socket exists" test -S "${AGENT_SOCK}"
 check "the server is healthy" sudo spire-server healthcheck -socketPath "${SERVER_SOCK}"
 check "the agent is healthy" sudo spire-agent healthcheck -socketPath "${AGENT_SOCK}"
