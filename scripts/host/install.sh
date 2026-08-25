@@ -63,12 +63,10 @@ host_install_packages() {
   is_true "${SPIRE_DEV_OIDC_DISCOVERY_PROVIDER:-}" && packages+=(spiffe-oidc-discovery-provider)
   if is_true "${SPIRE_DEV_IDENTITY_EXCHANGE:-}"; then
     # The exchange also needs the credential composer plugin, which sets the CN
-    # its x509pop selector matches on, and the server attestor its second agent
-    # rebootstraps through. See scripts/host/six.sh.
+    # that its x509pop node alias selector matches on. See scripts/host/six.sh.
     packages+=(
       spire-identity-exchange-server
       spire-credentialcomposer-identity-exchange
-      spire-server-attestor-spiffe-workload-api
     )
   fi
 

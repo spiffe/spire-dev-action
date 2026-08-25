@@ -2,12 +2,11 @@
 # Host mode with spire-identity-exchange.
 #
 # The most involved host scenario, and the one whose wiring cannot be checked
-# offline: it depends on packages resolving from the spire-examples feed
-# (spire-credentialcomposer-identity-exchange and
-# spire-server-attestor-spiffe-workload-api alongside the exchange itself), on the
-# credential composer setting the CN that the x509pop node alias matches, and on the
-# second agent attesting through x509pop in SPIFFE mode. Every one of those either
-# works end to end or the exchange never serves, so this scenario is the check.
+# offline: it depends on spire-credentialcomposer-identity-exchange resolving from
+# the spire-examples feed, on that composer setting the CN that the x509pop node
+# alias selector matches, and on the second agent attesting through x509pop in
+# SPIFFE mode. Every one of those either works end to end or the exchange never
+# serves, so this scenario is the check.
 #
 # The exchange is deployed with every auth plugin disabled, which is the default.
 # That is still a meaningful test: it exercises all the bootstrap machinery, and
@@ -34,6 +33,21 @@ SERVER_SOCK="/run/spire/server/sockets/main/private/api.sock"
 AGENT_SOCK="/run/spire/agent/sockets/main/public/api.sock"
 SIX_AGENT_SOCK="/run/spire/agent/sockets/main-six/public/api.sock"
 CERT="/etc/spire/identity-exchange/main/certs/server.pem"
+
+echo
+echo "== the second agent bootstraps the same way the primary one does"
+# The rebootstrap path this deliberately does not use needs a package, a unit and
+# an entry that nothing else here provides; if it ever comes back by accident the
+# agent hangs waiting on a socket that never appears, which is a slow and confusing
+# failure. Cheaper to assert the config.
+SIX_AGENT_CONF="/etc/spire/agent/main-six.conf"
+check "the second agent's config exists" sudo test -f "${SIX_AGENT_CONF}"
+if sudo grep -q 'trust_bundle_unix_socket\|rebootstrap_mode' "${SIX_AGENT_CONF}"; then
+  echo "FAIL the second agent is configured to rebootstrap, which needs a server attestor this action does not deploy" >&2
+  SCENARIO_FAILURES=$((SCENARIO_FAILURES + 1))
+else
+  echo "ok   the second agent does not depend on a rebootstrap trust-bundle source"
+fi
 
 echo
 echo "== both agent instances are healthy"

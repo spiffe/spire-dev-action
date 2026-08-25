@@ -6,8 +6,6 @@
 #
 #   * a CredentialComposer plugin on the server, which sets the CN on issued
 #     X509-SVIDs so the exchange can be identified by an x509pop selector;
-#   * a spiffe-workload-api server attestor, which the second agent rebootstraps
-#     through;
 #   * a second agent instance whose delegated identity API is authorized for the
 #     exchange and nothing else;
 #   * bootstrap registration entries for the exchange itself and for the second
@@ -19,8 +17,10 @@
 # because the x509pop mode, the SPIFFE path prefixes and the selectors all have to
 # agree exactly for attestation to succeed.
 #
-# Unlike the reference, which builds the plugin and attestor from source, these are
-# installed from the same package feed as everything else.
+# Unlike the reference, which builds the credential composer from source, it is
+# installed from the same package feed as everything else. The reference's
+# spire-server-attestor-spiffe-workload-api is not used at all; see
+# conf/host/agent-six.conf for why the rebootstrap path it serves is not reproduced.
 
 [ -n "${_SPIRE_DEV_HOST_SIX_SH:-}" ] && return 0
 _SPIRE_DEV_HOST_SIX_SH=1
@@ -42,7 +42,6 @@ host_deploy_six() {
 
   _six_generate_cert "${instance}"
   _six_write_config "${instance}"
-  _six_start_server_attestor "${instance}"
   _six_create_bootstrap_entries "${instance}" "${agent_id}"
   _six_start_second_agent "${instance}"
   _six_start_exchange "${instance}"
@@ -72,11 +71,6 @@ six_assert_installed() {
     /usr/libexec/spire/spire-identity-exchange-server \
     /usr/bin/spire-identity-exchange-server >/dev/null ||
     missing+=("spire-identity-exchange-server (package spire-identity-exchange-server)")
-
-  _six_find_binary spire-server-attestor-spiffe-workload-api \
-    /usr/bin/spire-server-attestor-spiffe-workload-api \
-    /usr/libexec/spire/spire-server-attestor-spiffe-workload-api >/dev/null ||
-    missing+=("spire-server-attestor-spiffe-workload-api (package spire-server-attestor-spiffe-workload-api)")
 
   # No alternative path for this one: it is compiled into the server config.
   [ -x "${SIX_CREDENTIAL_COMPOSER}" ] ||
@@ -197,25 +191,6 @@ EOF
   write_root_file "/etc/spire/identity-exchange/${instance}.json" <"${source_config}"
 }
 
-# _six_start_server_attestor <instance> — the socket the second agent
-# rebootstraps through.
-_six_start_server_attestor() {
-  local instance="$1"
-  local unit="spire-server-attestor-spiffe-workload-api@${instance}"
-
-  _six_unit_file spire-server-attestor-spiffe-workload-api >/dev/null ||
-    log_fail "the spire-server-attestor-spiffe-workload-api@.service unit is not installed"
-
-  sudo systemctl daemon-reload
-  sudo systemctl restart "${unit}" ||
-    log_fail "could not start ${unit}"
-  if ! wait_for_systemd_unit "${unit}"; then
-    dump_unit_failure "${unit}"
-    log_fail "${unit} did not become active"
-  fi
-  log_info "started ${unit}"
-}
-
 # _six_create_bootstrap_entries <instance> <agent-spiffe-id>
 #
 # Three entries have to exist before the exchange can work, and they are created
@@ -295,7 +270,6 @@ _six_start_second_agent() {
 SPIRE_SERVER_ADDRESS=${SPIRE_DEV_SERVER_ADDRESS}
 SPIRE_SERVER_PORT=${SPIRE_DEV_BIND_PORT}
 SPIRE_LOG_LEVEL=${SPIRE_DEV_LOG_LEVEL}
-SPIRE_DEV_PRIMARY_INSTANCE=${instance}
 SPIRE_DEV_PRIMARY_AGENT_SOCKET=$(agent_socket "${instance}")
 EOF
 

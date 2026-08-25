@@ -153,6 +153,27 @@ for six in false true; do
 done
 
 echo
+echo "== the identity-exchange agent template"
+six_conf="${SPIRE_DEV_ROOT}/conf/host/agent-six.conf"
+check_hcl_balanced "agent-six" "${six_conf}"
+
+# Its bootstrap has to match the primary agent's. The rebootstrap path the
+# reference uses needs a package, a unit and an entry that this action does not
+# deploy, and the symptom of it creeping back is an agent that hangs for a minute
+# dialling a socket that never appears.
+if grep -qE '^[[:space:]]*(trust_bundle_url|trust_bundle_unix_socket|rebootstrap_mode|rebootstrap_delay)' "${six_conf}"; then
+  fail "agent-six: configured to rebootstrap, which needs a server attestor this action does not deploy"
+else
+  ok "agent-six: no rebootstrap trust-bundle source"
+fi
+grep -q 'insecure_bootstrap = true' "${six_conf}" &&
+  ok "agent-six: bootstraps the same way the primary agent does" ||
+  fail "agent-six: insecure_bootstrap not set, and no alternative bootstrap source is deployed"
+grep -q 'NodeAttestor "x509pop"' "${six_conf}" &&
+  ok "agent-six: attests with x509pop" ||
+  fail "agent-six: x509pop NodeAttestor missing"
+
+echo
 if [ "${FAILURES}" -ne 0 ]; then
   echo "${FAILURES} check(s) failed" >&2
   exit 1
