@@ -82,8 +82,25 @@ when SPIRE does not come up, this is what says why.
 
 ## Registration entries
 
-Nothing gets an identity without a registration entry. There are two ways to declare
-them, and they can be combined.
+Nothing gets an identity without a registration entry, and SPIRE has no default
+identity. A process with no matching entry is refused:
+
+```
+rpc error: code = PermissionDenied desc = no identity issued
+```
+
+That is the security model working, not a fault: an entry names a SPIFFE ID and the
+selectors a process must match to be issued it, and anything unmatched gets nothing.
+So a deployment with no entries is not usable — declare them with the inputs below,
+or create them yourself against the `server-socket-path` output.
+
+The action does not return until the agent can actually issue an SVID. That is a
+stronger guarantee than the entries merely existing: the agent serves from a cache it
+refreshes from the server every few seconds, so there is a window in which an entry
+exists server-side and a workload asking for it is still refused. Waiting out that
+window is the action's job, not the caller's.
+
+There are two ways to declare entries, and they can be combined.
 
 ### The `entries` input
 

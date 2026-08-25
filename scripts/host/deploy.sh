@@ -157,12 +157,14 @@ host_apply_entries() {
         \( -name '*.yaml' -o -name '*.yml' \) -exec cp {} "${rendered}/" \;
     fi
 
+    local have_entries=0
     if [ -n "$(ls -A "${rendered}" 2>/dev/null)" ]; then
       sudo mkdir -p "${manifest_dir}"
       sudo cp "${rendered}"/*.y*ml "${manifest_dir}/"
       log_info "installed $(find "${rendered}" -type f | wc -l | tr -d ' ') manifest(s) into ${manifest_dir}"
+      have_entries=1
     else
-      log_info "no entries supplied; the controller-manager will create none"
+      log_warn "no entries were supplied, so the controller-manager will create none and no workload will be issued an SVID. Use the entries, entries-file or manifests-dir input."
     fi
 
     log_info "starting $(controller_manager_unit "${instance}")"
@@ -180,6 +182,11 @@ host_apply_entries() {
         log_fail "the controller-manager did not create an entry for ${id}"
     done < <(printf '%s' "${canonical}" | jq -r '.[].spiffeID' |
       sed "s|\${SPIFFE_TRUST_DOMAIN}|${SPIRE_DEV_TRUST_DOMAIN}|g")
+
+    if [ "${have_entries}" -eq 0 ]; then
+      log_endgroup
+      return 0
+    fi
   else
     local canonical
     canonical="$(entries_normalize "${combined}" \
@@ -188,7 +195,10 @@ host_apply_entries() {
     local count
     count="$(printf '%s' "${canonical}" | jq 'length')"
     if [ "${count}" -eq 0 ]; then
-      log_info "no entries supplied"
+      # Worth saying plainly: SPIRE has no default identity, so with no entries
+      # every workload gets PermissionDenied. That is a usable outcome only if the
+      # caller intends to create entries themselves from the outputs.
+      log_warn "no entries were supplied, so no workload will be issued an SVID. Use the entries, entries-file or manifests-dir input, or create entries yourself with the server-socket-path output."
       log_endgroup
       return 0
     fi
@@ -222,6 +232,81 @@ host_apply_entries() {
     done < <(printf '%s' "${canonical}" | jq -r '.[].spiffeID')
   fi
 
+  log_endgroup
+
+  host_wait_for_entry_propagation "${instance}" "${default_parent}"
+}
+
+# host_wait_for_entry_propagation <instance> <agent-spiffe-id>
+#
+# Waits until the agent can actually issue an SVID, not merely until the entries
+# exist on the server.
+#
+# Those are different things. The agent serves from a cache it refreshes from the
+# server on an interval (5s by default), so an entry can exist server-side while a
+# workload asking for it still gets "PermissionDenied: no identity issued". Without
+# this gate the action returns during that window and the caller's very next step
+# loses the race -- which is exactly the kind of failure that looks like a
+# misconfigured entry rather than a timing problem.
+#
+# The gate is a throwaway entry created last and matched by a transient unit this
+# action controls. Because the agent syncs all of its entries in one pass, the probe
+# becoming issuable proves the sync happened after every entry above it was created.
+# Probing a caller's own entry instead would mean guessing which of their selectors
+# this action is able to satisfy.
+host_wait_for_entry_propagation() {
+  local instance="$1"
+  local parent_id="$2"
+  local server_sock agent_sock
+  server_sock="$(server_socket "${instance}")"
+  agent_sock="$(agent_socket "${instance}")"
+
+  local probe_unit="spire-dev-action-probe"
+  local probe_entry_id="spire-dev-action-ready-probe"
+  local probe_id="spiffe://${SPIRE_DEV_TRUST_DOMAIN}/spire-dev-action/ready-probe"
+
+  log_group "Waiting for entries to reach the agent"
+
+  local probe_json
+  probe_json="$(work_dir)/ready-probe.json"
+  # A pinned entry_id, so the probe can be deleted deterministically rather than by
+  # searching for it.
+  cat >"${probe_json}" <<EOF
+{
+  "entries": [
+    {
+      "entry_id": "${probe_entry_id}",
+      "spiffe_id": "${probe_id}",
+      "parent_id": "${parent_id}",
+      "selectors": [{"type": "systemd", "value": "id:${probe_unit}.service"}]
+    }
+  ]
+}
+EOF
+
+  local output rc=0
+  output="$(sudo spire-server entry create -socketPath "${server_sock}" \
+    -data "${probe_json}" 2>&1)" || rc=$?
+  if [ "${rc}" -ne 0 ] &&
+    ! printf '%s' "${output}" | grep -qi 'similar entry already exists'; then
+    log_warn "could not create the readiness probe entry; skipping the propagation check"
+    printf '%s\n' "${output}" | sed 's/^/  /'
+    log_endgroup
+    return 0
+  fi
+
+  rc=0
+  wait_for_workload_jwt "${probe_unit}" "${agent_sock}" spire-dev-action-probe || rc=$?
+
+  # Removed either way: an entry nothing should match must not outlive the check.
+  sudo spire-server entry delete -socketPath "${server_sock}" \
+    -entryID "${probe_entry_id}" >/dev/null 2>&1 || true
+
+  if [ "${rc}" -ne 0 ]; then
+    log_fail "entries exist on the server but the agent did not become able to issue SVIDs. The deployment is not usable; check the agent log with the diagnostics action."
+  fi
+
+  log_info "the agent is serving entries; workloads can be issued SVIDs"
   log_endgroup
 }
 
