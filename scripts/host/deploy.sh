@@ -34,6 +34,18 @@ host_deploy() {
 
   host_resolve_controller_manager
   host_install_packages
+
+  # Before host_configure, not inside host_deploy_six at the end: enabling the
+  # exchange makes host_configure add a CredentialComposer to the server config
+  # that names a plugin binary on disk. If that binary is missing the server dies
+  # at startup with nothing pointing at the cause, so the check has to precede the
+  # config that depends on it.
+  if is_true "${SPIRE_DEV_IDENTITY_EXCHANGE}"; then
+    # shellcheck source=./six.sh
+    . "${_host_deploy_dir}/six.sh"
+    six_assert_installed
+  fi
+
   host_configure
 
   # --- server -------------------------------------------------------------
@@ -43,8 +55,10 @@ host_deploy() {
   sudo systemctl daemon-reload
   sudo systemctl restart "$(server_unit "${instance}")" ||
     log_fail "could not start $(server_unit "${instance}")"
-  wait_for_healthcheck spire-server "${server_sock}" ||
+  if ! wait_for_healthcheck spire-server "${server_sock}"; then
+    dump_unit_failure "$(server_unit "${instance}")"
     log_fail "the SPIRE server did not become healthy"
+  fi
   log_endgroup
 
   # --- agent --------------------------------------------------------------
@@ -54,8 +68,10 @@ host_deploy() {
   agent_sock="$(agent_socket "${instance}")"
   sudo systemctl restart "$(agent_unit "${instance}")" ||
     log_fail "could not start $(agent_unit "${instance}")"
-  wait_for_healthcheck spire-agent "${agent_sock}" ||
+  if ! wait_for_healthcheck spire-agent "${agent_sock}"; then
+    dump_unit_failure "$(agent_unit "${instance}")"
     log_fail "the SPIRE agent did not become healthy"
+  fi
   log_endgroup
 
   # --- entries ------------------------------------------------------------
@@ -66,8 +82,6 @@ host_deploy() {
     host_deploy_oidc "${instance}"
   fi
   if is_true "${SPIRE_DEV_IDENTITY_EXCHANGE}"; then
-    # shellcheck source=./six.sh
-    . "${_host_deploy_dir}/six.sh"
     host_deploy_six "${instance}" "${agent_id}"
   fi
 
@@ -170,8 +184,10 @@ host_apply_entries() {
     log_info "starting $(controller_manager_unit "${instance}")"
     sudo systemctl restart "$(controller_manager_unit "${instance}")" ||
       log_fail "could not start $(controller_manager_unit "${instance}")"
-    wait_for_systemd_unit "$(controller_manager_unit "${instance}")" ||
+    if ! wait_for_systemd_unit "$(controller_manager_unit "${instance}")"; then
+      dump_unit_failure "$(controller_manager_unit "${instance}")"
       log_fail "the controller-manager did not become active"
+    fi
 
     # Gate on the entries actually appearing: the controller-manager reconciles
     # asynchronously, so a caller's next step would otherwise race it.

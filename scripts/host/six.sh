@@ -40,7 +40,6 @@ host_deploy_six() {
 
   log_group "Deploying spire-identity-exchange"
 
-  _six_assert_installed
   _six_generate_cert "${instance}"
   _six_write_config "${instance}"
   _six_start_server_attestor "${instance}"
@@ -56,31 +55,34 @@ host_deploy_six() {
   log_endgroup
 }
 
-# _six_assert_installed — check for the pieces before touching anything, so a
-# missing package produces one clear message rather than a failure part way
-# through.
-_six_assert_installed() {
+# six_assert_installed — check for every piece before anything depends on it.
+#
+# Called from host_deploy before the server is configured, because enabling the
+# exchange adds a CredentialComposer to the server config that names a plugin binary
+# on disk; if that binary is absent the server exits at startup and nothing in the
+# failure points at the exchange.
+six_assert_installed() {
   local missing=()
 
-  # The rpm packaging installs the exchange to /usr/bin while its unit runs
-  # /usr/libexec/spire/. A symlink is created rather than failing, because which
-  # of the two the deb uses is a packaging detail that has changed before.
-  if [ ! -x /usr/libexec/spire/spire-identity-exchange-server ]; then
-    if [ -x /usr/bin/spire-identity-exchange-server ]; then
-      log_info "linking /usr/bin/spire-identity-exchange-server into /usr/libexec/spire/, where the unit expects it"
-      sudo mkdir -p /usr/libexec/spire
-      sudo ln -sf /usr/bin/spire-identity-exchange-server \
-        /usr/libexec/spire/spire-identity-exchange-server
-    else
-      missing+=("spire-identity-exchange-server")
-    fi
-  fi
+  # Two paths are accepted for each of these. The packages install to /usr/bin,
+  # while spire-identity-exchange's own integration tests build from source and copy
+  # into /usr/libexec/spire. Accepting both means this works against either, rather
+  # than encoding one repo's habit as a requirement.
+  _six_find_binary spire-identity-exchange-server \
+    /usr/libexec/spire/spire-identity-exchange-server \
+    /usr/bin/spire-identity-exchange-server >/dev/null ||
+    missing+=("spire-identity-exchange-server (package spire-identity-exchange-server)")
 
-  [ -x /usr/libexec/spire/plugins/credentialcomposer-identity-exchange ] ||
-    missing+=("credentialcomposer-identity-exchange (package spire-credentialcomposer-identity-exchange)")
-  [ -x /usr/libexec/spire/spire-server-attestor-spiffe-workload-api ] ||
-    missing+=("spire-server-attestor-spiffe-workload-api")
-  [ -f /usr/lib/systemd/system/spire-identity-exchange-server@.service ] ||
+  _six_find_binary spire-server-attestor-spiffe-workload-api \
+    /usr/bin/spire-server-attestor-spiffe-workload-api \
+    /usr/libexec/spire/spire-server-attestor-spiffe-workload-api >/dev/null ||
+    missing+=("spire-server-attestor-spiffe-workload-api (package spire-server-attestor-spiffe-workload-api)")
+
+  # No alternative path for this one: it is compiled into the server config.
+  [ -x "${SIX_CREDENTIAL_COMPOSER}" ] ||
+    missing+=("${SIX_CREDENTIAL_COMPOSER} (package spire-credentialcomposer-identity-exchange)")
+
+  _six_unit_file spire-identity-exchange-server >/dev/null ||
     missing+=("the spire-identity-exchange-server@.service unit")
 
   if [ "${#missing[@]}" -gt 0 ]; then
@@ -91,6 +93,46 @@ _six_assert_installed() {
     done
     log_fail "identity-exchange requires these from the spire-examples package feed. Set identity-exchange: false, or use mode: k8s where the chart provides them."
   fi
+
+  # The unit's ExecStart is a fixed path, so a package that installed elsewhere is
+  # linked into place rather than treated as missing.
+  if [ ! -x /usr/libexec/spire/spire-identity-exchange-server ] &&
+    [ -x /usr/bin/spire-identity-exchange-server ]; then
+    log_info "linking /usr/bin/spire-identity-exchange-server into /usr/libexec/spire/, where the unit expects it"
+    sudo mkdir -p /usr/libexec/spire
+    sudo ln -sf /usr/bin/spire-identity-exchange-server \
+      /usr/libexec/spire/spire-identity-exchange-server
+  fi
+}
+
+# _six_find_binary <label> <path>... — echo the first executable path, or fail.
+_six_find_binary() {
+  local label="$1"
+  shift
+  local path
+  for path in "$@"; do
+    if [ -x "${path}" ]; then
+      log_info "found ${label} at ${path}"
+      echo "${path}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# _six_unit_file <name> — echo the unit file path, whether package- or
+# action-installed.
+_six_unit_file() {
+  local name="$1"
+  local path
+  for path in "/usr/lib/systemd/system/${name}@.service" \
+    "/etc/systemd/system/${name}@.service"; do
+    if [ -f "${path}" ]; then
+      echo "${path}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # _six_generate_cert <instance> — self-signed certificate for the TLS listeners.
@@ -161,16 +203,16 @@ _six_start_server_attestor() {
   local instance="$1"
   local unit="spire-server-attestor-spiffe-workload-api@${instance}"
 
-  if [ ! -f "/usr/lib/systemd/system/${unit%@*}@.service" ] &&
-    [ ! -f "/etc/systemd/system/${unit%@*}@.service" ]; then
-    log_fail "the ${unit%@*}@.service unit is not installed; the spire-server-attestor-spiffe-workload-api package did not install as expected"
-  fi
+  _six_unit_file spire-server-attestor-spiffe-workload-api >/dev/null ||
+    log_fail "the spire-server-attestor-spiffe-workload-api@.service unit is not installed"
 
   sudo systemctl daemon-reload
   sudo systemctl restart "${unit}" ||
     log_fail "could not start ${unit}"
-  wait_for_systemd_unit "${unit}" ||
+  if ! wait_for_systemd_unit "${unit}"; then
+    dump_unit_failure "${unit}"
     log_fail "${unit} did not become active"
+  fi
   log_info "started ${unit}"
 }
 
@@ -262,8 +304,10 @@ EOF
 
   sudo systemctl restart "$(agent_unit "${six}")" ||
     log_fail "could not start $(agent_unit "${six}")"
-  wait_for_healthcheck spire-agent "$(agent_socket "${six}")" ||
+  if ! wait_for_healthcheck spire-agent "$(agent_socket "${six}")"; then
+    dump_unit_failure "$(agent_unit "${six}")"
     log_fail "the identity-exchange agent instance did not become healthy"
+  fi
   log_info "started $(agent_unit "${six}")"
 }
 
@@ -281,9 +325,11 @@ _six_start_exchange() {
   # the same for the first few attempts.
   # The root path is not an endpoint, so any response counts; the certificate is
   # self-signed, hence --insecure.
-  wait_for_listener "https://localhost:${SPIRE_DEV_SIX_TLS_REST_PORT}" \
-    "${SPIRE_DEV_TIMEOUTS_IDENTITY_EXCHANGE}" --insecure ||
+  if ! wait_for_listener "https://localhost:${SPIRE_DEV_SIX_TLS_REST_PORT}" \
+    "${SPIRE_DEV_TIMEOUTS_IDENTITY_EXCHANGE}" --insecure; then
+    dump_unit_failure "${unit}"
     log_fail "spire-identity-exchange did not start serving on port ${SPIRE_DEV_SIX_TLS_REST_PORT}"
+  fi
 
   log_info "spire-identity-exchange is serving on ports ${SPIRE_DEV_SIX_TLS_GRPC_PORT} (grpc) and ${SPIRE_DEV_SIX_TLS_REST_PORT} (rest)"
 }

@@ -25,6 +25,15 @@ six_instance() {
   echo "${SPIRE_DEV_INSTANCE}-six"
 }
 
+# --- external plugins ------------------------------------------------------
+
+# Where the spire-credentialcomposer-identity-exchange package installs its binary.
+# Named here rather than in either caller because two places need to agree exactly:
+# scripts/host/configure.sh writes it into the server config, and
+# scripts/host/six.sh checks it exists before that config is written. If those two
+# ever disagreed the server would fail to start with nothing pointing at why.
+export SIX_CREDENTIAL_COMPOSER=/usr/libexec/spire/plugins/credentialcomposer-identity-exchange
+
 # --- sockets (created by the units' RuntimeDirectory) -----------------------
 
 server_socket() {

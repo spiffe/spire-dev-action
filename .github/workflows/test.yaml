@@ -40,6 +40,9 @@ jobs:
       - name: entry renderer golden tests
         run: tests/entries/run-tests.sh
 
+      - name: host config renders to valid HCL
+        run: tests/host-config/run-tests.sh
+
       - name: k8s values render against the real chart
         run: tests/k8s-values/run-tests.sh
 

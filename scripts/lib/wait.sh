@@ -128,6 +128,23 @@ wait_for_systemd_unit() {
     sudo systemctl is-active --quiet "${unit}"
 }
 
+# dump_unit_failure <unit> — print why a unit is not running.
+#
+# Called on any start or healthcheck failure. Without this a timeout reports only
+# that something did not become healthy, which is never enough to act on and sends
+# the reader off to find an artifact; the journal almost always names the cause on
+# the first try.
+dump_unit_failure() {
+  local unit="$1"
+  log_error "${unit} did not come up; its status and log follow"
+  log_group "${unit} status"
+  sudo systemctl status --no-pager --full "${unit}" 2>&1 | sed 's/^/  /' || true
+  log_endgroup
+  log_group "${unit} log"
+  sudo journalctl --no-pager -u "${unit}" -n 100 2>&1 | sed 's/^/  /' || true
+  log_endgroup
+}
+
 # wait_for_workload_jwt <unit-name> <agent-socket> [audience] [timeout]
 #
 # Fetches a JWT-SVID as a transient systemd unit, so the agent's systemd

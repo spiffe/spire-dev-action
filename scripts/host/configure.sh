@@ -77,13 +77,19 @@ EOF
 
 _write_server_config() {
   local instance="$1"
+  render_server_config | write_root_file "$(server_config "${instance}")"
+}
+
+# render_server_config — the server config for the enabled components, to stdout.
+#
+# Separate from _write_server_config so it can be rendered and inspected without
+# root; tests/host-config exercises it directly.
+render_server_config() {
   local template="${SPIRE_DEV_ROOT}/conf/host/server.conf"
-  local extra experimental
+  local extra
   extra="$(work_dir)/server-extra-plugins.conf"
-  experimental="$(work_dir)/server-experimental.conf"
 
   : >"${extra}"
-  : >"${experimental}"
 
   if is_true "${SPIRE_DEV_IDENTITY_EXCHANGE}"; then
     # spire-identity-exchange needs three additions to the server, all of them
@@ -94,12 +100,19 @@ _write_server_config() {
     #     makes the x509pop selectors below able to identify the exchange.
     #   NodeAttestor x509pop in mode "spiffe" -- attests the second agent using
     #     the SVID it holds, rather than against a static CA bundle.
-    #   agent_spiffe_id_as_selector -- lets entries be scoped to the attesting
-    #     agent's SPIFFE ID.
-    cat >>"${extra}" <<'EOF'
+    #
+    # The reference also sets experimental.agent_spiffe_id_as_selector, which is
+    # not reproduced here: it exists so entries can be scoped to the attesting
+    # agent's SPIFFE ID, and nothing this action generates does that. Leaving it
+    # out keeps one less experimental setting between a working server and a
+    # server that will not start.
+    # Unquoted heredoc so the plugin path comes from the shared constant rather
+    # than being written out a second time. The Go template braces below contain
+    # no shell expansions, so they survive as written.
+    cat >>"${extra}" <<EOF
 
     CredentialComposer "spire-identity-exchange" {
-        plugin_cmd = "/usr/libexec/spire/plugins/credentialcomposer-identity-exchange"
+        plugin_cmd = "${SIX_CREDENTIAL_COMPOSER}"
         # Unpinned: the plugin is installed from the same package feed as the
         # server in the same job, so there is no separate artifact to pin
         # against. A real deployment should set this.
@@ -115,31 +128,31 @@ _write_server_config() {
         }
     }
 EOF
-    cat >>"${experimental}" <<'EOF'
-
-    experimental {
-        agent_spiffe_id_as_selector = true
-    }
-EOF
   fi
 
-  # Markers are replaced rather than appended to: sed's 'r' would leave the
+  # The marker is replaced rather than appended to: sed's 'r' would leave the
   # marker line itself in the installed file.
-  awk -v extrafile="${extra}" -v expfile="${experimental}" '
-    /@@EXTRA_PLUGINS@@/ {
+  #
+  # Matched as a whole line, not as a substring. The template's own header comment
+  # names the marker to explain it, and a substring match hit that line too --
+  # injecting the plugin blocks at top level, outside plugins {}, which is invalid
+  # HCL and stops the server from starting at all.
+  awk -v extrafile="${extra}" '
+    $0 == "@@EXTRA_PLUGINS@@" {
       while ((getline line < extrafile) > 0) print line
       next
     }
-    /@@SERVER_EXPERIMENTAL@@/ {
-      while ((getline line < expfile) > 0) print line
-      next
-    }
     { print }
-  ' "${template}" | write_root_file "$(server_config "${instance}")"
+  ' "${template}"
 }
 
 _write_agent_config() {
   local instance="$1"
+  render_agent_config | write_root_file "$(agent_config "${instance}")"
+}
+
+# render_agent_config — the agent config for the enabled components, to stdout.
+render_agent_config() {
   local template="${SPIRE_DEV_ROOT}/conf/host/agent.conf"
 
   # authorized_delegates gates who may use the agent's delegated identity API.
@@ -150,8 +163,7 @@ _write_agent_config() {
     delegates="\"spiffe://\${SPIFFE_TRUST_DOMAIN}/service/spire-identity-exchange\""
   fi
 
-  sed "s|@@AUTHORIZED_DELEGATES@@|${delegates}|" "${template}" |
-    write_root_file "$(agent_config "${instance}")"
+  sed "s|@@AUTHORIZED_DELEGATES@@|${delegates}|" "${template}"
 }
 
 # host_write_join_token <instance> <parent-spiffe-id>
