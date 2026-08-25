@@ -35,6 +35,21 @@ ok() {
   echo "ok   $*"
 }
 
+# config_only <file> — the file with comments stripped.
+#
+# Every content check goes through this. These configs document the settings they
+# deliberately do not use, so grepping the raw text reads that prose as
+# configuration: an absence check fails on a comment that names the setting, and a
+# presence check passes on one. Both have happened.
+config_only() {
+  sed 's/#.*//' "$1"
+}
+
+# config_has <file> <extended-regex> — the regex matches actual configuration.
+config_has() {
+  config_only "$1" | grep -qE "$2"
+}
+
 # check_hcl_balanced <label> <file> — braces must pair, and every one must close.
 #
 # A cheap structural check, but it is exactly what the marker bug broke: the
@@ -80,8 +95,9 @@ count_at_depth_zero() {
   echo "${found}"
 }
 
+# count_matches <regex> <file> — occurrences in configuration, not in comments.
 count_matches() {
-  grep -c "$1" "$2" || true
+  config_only "$2" | grep -cE "$1" || true
 }
 
 for six in false true; do
@@ -93,7 +109,8 @@ for six in false true; do
 
   check_hcl_balanced "server (six=${six})" "${out}"
 
-  # The marker must never survive into an installed config.
+  # Raw text on purpose, unlike the checks above: a marker left anywhere, comment
+  # included, means the template and the renderer disagree.
   if grep -q '@@' "${out}"; then
     fail "server (six=${six}): an unreplaced marker survived"
     grep -n '@@' "${out}" | sed 's/^/     /' >&2
@@ -111,14 +128,14 @@ for six in false true; do
     fi
   done
 
-  n="$(count_matches 'CredentialComposer' "${out}")"
+  n="$(count_matches '^[[:space:]]*CredentialComposer' "${out}")"
   if [ "${six}" = "true" ]; then
     [ "${n}" -eq 1 ] && ok "server: exactly one CredentialComposer" ||
       fail "server: expected 1 CredentialComposer, found ${n}"
-    [ "$(count_matches 'NodeAttestor "x509pop"' "${out}")" -eq 1 ] &&
+    [ "$(count_matches '^[[:space:]]*NodeAttestor "x509pop"' "${out}")" -eq 1 ] &&
       ok "server: exactly one x509pop NodeAttestor" ||
       fail "server: x509pop NodeAttestor count wrong"
-    grep -q "plugin_cmd = \"${SIX_CREDENTIAL_COMPOSER}\"" "${out}" &&
+    config_has "${out}" "^[[:space:]]*plugin_cmd = \"${SIX_CREDENTIAL_COMPOSER}\"" &&
       ok "server: the composer path matches the shared constant" ||
       fail "server: the composer path does not match ${SIX_CREDENTIAL_COMPOSER}"
   else
@@ -127,7 +144,7 @@ for six in false true; do
   fi
 
   # The join_token attestor is what lets the agent attest at all.
-  grep -q 'NodeAttestor "join_token"' "${out}" &&
+  config_has "${out}" '^[[:space:]]*NodeAttestor "join_token"' &&
     ok "server (six=${six}): join_token attestor present" ||
     fail "server (six=${six}): join_token attestor missing"
 
@@ -142,11 +159,11 @@ for six in false true; do
     ok "agent (six=${six}): no unreplaced markers"
   fi
   if [ "${six}" = "true" ]; then
-    grep -q 'authorized_delegates = \["spiffe://.*spire-identity-exchange"\]' "${aout}" &&
+    config_has "${aout}" '^[[:space:]]*authorized_delegates = \["spiffe://.*spire-identity-exchange"\]' &&
       ok "agent: the exchange is an authorized delegate" ||
       fail "agent: authorized_delegates not set for the exchange"
   else
-    grep -q 'authorized_delegates = \[\]' "${aout}" &&
+    config_has "${aout}" '^[[:space:]]*authorized_delegates = \[\]' &&
       ok "agent: no delegates authorized when six is off" ||
       fail "agent: authorized_delegates should be empty with six off"
   fi
@@ -161,15 +178,15 @@ check_hcl_balanced "agent-six" "${six_conf}"
 # reference uses needs a package, a unit and an entry that this action does not
 # deploy, and the symptom of it creeping back is an agent that hangs for a minute
 # dialling a socket that never appears.
-if grep -qE '^[[:space:]]*(trust_bundle_url|trust_bundle_unix_socket|rebootstrap_mode|rebootstrap_delay)' "${six_conf}"; then
+if config_has "${six_conf}" '(trust_bundle_url|trust_bundle_unix_socket|rebootstrap_mode|rebootstrap_delay)'; then
   fail "agent-six: configured to rebootstrap, which needs a server attestor this action does not deploy"
 else
   ok "agent-six: no rebootstrap trust-bundle source"
 fi
-grep -q 'insecure_bootstrap = true' "${six_conf}" &&
+config_has "${six_conf}" '^[[:space:]]*insecure_bootstrap = true' &&
   ok "agent-six: bootstraps the same way the primary agent does" ||
   fail "agent-six: insecure_bootstrap not set, and no alternative bootstrap source is deployed"
-grep -q 'NodeAttestor "x509pop"' "${six_conf}" &&
+config_has "${six_conf}" '^[[:space:]]*NodeAttestor "x509pop"' &&
   ok "agent-six: attests with x509pop" ||
   fail "agent-six: x509pop NodeAttestor missing"
 
