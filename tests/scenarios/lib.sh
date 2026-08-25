@@ -81,6 +81,28 @@ check_contains() {
   fi
 }
 
+# check_absent <description> <haystack> <needle>
+#
+# Fails if the haystack is empty as well as if it contains the needle: a negative
+# assertion against nothing passes for the wrong reason, which is exactly how a
+# broken lookup hides.
+check_absent() {
+  local description="$1"
+  local haystack="$2"
+  local needle="$3"
+  if [ -z "${haystack}" ]; then
+    echo "FAIL ${description}: nothing to check against (the lookup returned empty)" >&2
+    SCENARIO_FAILURES=$((SCENARIO_FAILURES + 1))
+  elif printf '%s' "${haystack}" | grep -qF "${needle}"; then
+    echo "FAIL ${description}" >&2
+    echo "     unexpectedly found: ${needle}" >&2
+    printf '%s\n' "${haystack}" | grep -F "${needle}" | sed 's/^/     /' >&2
+    SCENARIO_FAILURES=$((SCENARIO_FAILURES + 1))
+  else
+    echo "ok   ${description}"
+  fi
+}
+
 scenario_end() {
   echo
   if [ "${SCENARIO_FAILURES}" -ne 0 ]; then

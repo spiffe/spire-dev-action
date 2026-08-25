@@ -77,14 +77,15 @@ log_info "workload image: ${AGENT_IMAGE}"
 yq "(.spec.containers[] | select(.name == \"main\") | .image) = \"${AGENT_IMAGE}\"" \
   "${SCENARIO_DIR}/workload.yaml" | kubectl apply -n "${NS}" -f -
 
-if kubectl wait --for=condition=Ready pod/spire-dev-workload -n "${NS}" --timeout=120s ||
-  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/spire-dev-workload \
-    -n "${NS}" --timeout=120s; then
+# Waits for Succeeded, not Ready: the pod fetches an SVID and exits, so it never
+# becomes Ready and waiting on that would just burn the timeout before failing.
+if kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/spire-dev-workload \
+  -n "${NS}" --timeout=120s; then
   WORKLOAD_OUT="$(kubectl logs -n "${NS}" pod/spire-dev-workload 2>&1 || true)"
   check_contains "the pod was issued the expected SPIFFE ID" \
     "${WORKLOAD_OUT}" "spiffe://kind.test/myapp"
 else
-  echo "FAIL the workload pod never became ready" >&2
+  echo "FAIL the workload pod did not complete successfully" >&2
   kubectl describe pod spire-dev-workload -n "${NS}" >&2 || true
   kubectl logs -n "${NS}" pod/spire-dev-workload >&2 2>&1 || true
   SCENARIO_FAILURES=$((SCENARIO_FAILURES + 1))
@@ -93,16 +94,14 @@ kubectl delete pod spire-dev-workload -n "${NS}" --ignore-not-found --wait=false
 
 echo
 echo "== the trust domain was applied everywhere"
-SERVER_CONFIG="$(kubectl get configmap -n "${NS}" -l app.kubernetes.io/name=server \
-  -o yaml 2>/dev/null || true)"
+# Fetched by name, not by label: the chart's configmaps carry no labels at all, so
+# a label selector matches nothing and silently yields an empty list.
+SERVER_CONFIG="$(kubectl get configmap "${SPIRE_DEV_RELEASE_NAME:-spire}-server" \
+  -n "${NS}" -o yaml 2>/dev/null || true)"
 check_contains "the server config uses the requested trust domain" \
   "${SERVER_CONFIG}" "kind.test"
-if printf '%s' "${SERVER_CONFIG}" | grep -qF 'example.org'; then
-  echo "FAIL example.org survives in the server config" >&2
-  SCENARIO_FAILURES=$((SCENARIO_FAILURES + 1))
-else
-  echo "ok   no leftover example.org in the server config"
-fi
+check_absent "no leftover example.org in the server config" \
+  "${SERVER_CONFIG}" "example.org"
 
 echo
 echo "== teardown removes the cluster"

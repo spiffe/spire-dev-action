@@ -44,13 +44,8 @@ check_contains "the rendered entry exists" "${ENTRIES}" "spiffe://scm.test/api"
 
 echo
 echo "== the trust domain placeholder was expanded, not taken literally"
-if printf '%s' "${ENTRIES}" | grep -qF 'SPIFFE_TRUST_DOMAIN'; then
-  echo "FAIL an entry contains a literal \${SPIFFE_TRUST_DOMAIN}" >&2
-  printf '%s\n' "${ENTRIES}" | grep -F 'SPIFFE_TRUST_DOMAIN' >&2
-  SCENARIO_FAILURES=$((SCENARIO_FAILURES + 1))
-else
-  echo "ok   no literal \${SPIFFE_TRUST_DOMAIN} survived into any entry"
-fi
+check_absent "no literal SPIFFE_TRUST_DOMAIN survived into any entry" \
+  "${ENTRIES}" "SPIFFE_TRUST_DOMAIN"
 check_contains "the manifest's dnsNames were applied" "${ENTRIES}" "db.internal"
 
 echo
