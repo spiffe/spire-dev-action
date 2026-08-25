@@ -50,7 +50,6 @@ the process. See [Identifying a unix workload](#identifying-a-unix-workload).
     trust-domain: example.org
     entries: |
       - spiffeID: myapp
-        parentID: spiffe://example.org/spire/server
         selectors:
           - k8s:ns:default
           - k8s:pod-label:app:myapp
@@ -113,8 +112,21 @@ entries: |
 
 A `spiffeID` without a `spiffe://` scheme is treated as a path under the trust
 domain, so entries stay portable if the trust domain changes. `parentID` works the
-same way, and defaults to the agent (`spiffe://<trust-domain>/agent/<node-id>`) in
-host mode and the server (`spiffe://<trust-domain>/spire/server`) in k8s mode.
+same way.
+
+**Leave `parentID` unset unless you know you need it.** A workload entry has to be
+parented on the agent that will serve it, and the right value differs by mode:
+
+- **host** — it defaults to the agent, `spiffe://<trust-domain>/agent/<node-id>`.
+- **k8s** — there is no fixed agent ID to name, because `k8s_psat` derives one per
+  node (`spiffe://<trust-domain>/spire/agent/k8s_psat/<cluster>/<node-uid>`). So the
+  action creates a *node alias* selecting every agent in the cluster, and entries
+  default to parenting on it:
+  `spiffe://<trust-domain>/spire-dev-action/agents`.
+
+Setting `parentID` to `spiffe://<trust-domain>/spire/server` is a common mistake: an
+entry parented on the server is a node alias, not a workload entry, so no workload
+will ever match it and the SVID request fails with `no identity issued`.
 
 Selectors are `type:value` strings, split on the first colon only — so
 `unix:path:/usr/bin/app` parses as type `unix`, value `path:/usr/bin/app`. The

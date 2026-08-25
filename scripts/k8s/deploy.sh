@@ -156,20 +156,70 @@ EOF
   echo "${file}"
 }
 
-# k8s_write_entries_values — the caller's entries as chart values, or nothing when
-# there are none. Echoes the file path.
-k8s_write_entries_values() {
+# k8s_node_alias_id — SPIFFE ID of the node alias every workload entry parents on.
+k8s_node_alias_id() {
+  echo "spiffe://${SPIRE_DEV_TRUST_DOMAIN}/spire-dev-action/agents"
+}
+
+# k8s_entries_canonical — the caller's entries, plus the node alias they depend on.
+#
+# A workload entry cannot be parented on the server. In SPIRE an entry whose parent
+# is spiffe://<td>/spire/server is a node alias; a workload entry has to be parented
+# on the agent that will serve it. Under k8s_psat an agent's ID is derived per node
+# (spiffe://<td>/spire/agent/k8s_psat/<cluster>/<node-uid>), so there is no fixed
+# agent ID a static entry could name.
+#
+# The standard resolution, and what the chart's own ClusterSPIFFEIDs achieve through
+# a parentID template, is a node alias: one entry parented on the server selecting
+# every agent in the cluster, which workload entries then parent on. That alias is
+# created here so the entries input behaves the same way in both modes, and so a
+# caller does not have to know any of the above.
+#
+# Echoes the canonical JSON, or nothing when the caller supplied no entries.
+k8s_entries_canonical() {
   local combined
   combined="$(work_dir)/entries-input.yaml"
   entries_collect "${SPIRE_DEV_ENTRIES}" "${SPIRE_DEV_ENTRIES_FILE}" "${combined}"
 
-  local canonical
-  canonical="$(entries_normalize "${combined}" "${SPIRE_DEV_TRUST_DOMAIN}" \
-    "spiffe://${SPIRE_DEV_TRUST_DOMAIN}/spire/server")"
+  local alias_id
+  alias_id="$(k8s_node_alias_id)"
+
+  local caller_canonical
+  caller_canonical="$(entries_normalize "${combined}" "${SPIRE_DEV_TRUST_DOMAIN}" \
+    "${alias_id}")"
 
   local count
-  count="$(printf '%s' "${canonical}" | jq 'length')"
+  count="$(printf '%s' "${caller_canonical}" | jq 'length')"
   [ "${count}" -eq 0 ] && return 0
+
+  # Only worth creating if something parents on it. Its own parent is the server,
+  # which is what makes it an alias rather than a workload entry.
+  local alias_yaml
+  alias_yaml="$(work_dir)/node-alias.yaml"
+  cat >"${alias_yaml}" <<EOF
+- name: spire-dev-action-agents
+  spiffeID: ${alias_id}
+  parentID: spiffe://${SPIRE_DEV_TRUST_DOMAIN}/spire/server
+  selectors:
+    - k8s_psat:cluster:${SPIRE_DEV_CLUSTER_NAME}
+EOF
+
+  local alias_canonical
+  alias_canonical="$(entries_normalize "${alias_yaml}" "${SPIRE_DEV_TRUST_DOMAIN}" \
+    "${alias_id}")"
+
+  # Alias first, so it reads in dependency order in the log.
+  jq -s 'add' \
+    <(printf '%s' "${alias_canonical}") \
+    <(printf '%s' "${caller_canonical}")
+}
+
+# k8s_write_entries_values — the caller's entries as chart values, or nothing when
+# there are none. Echoes the file path.
+k8s_write_entries_values() {
+  local canonical
+  canonical="$(k8s_entries_canonical)"
+  [ -n "${canonical}" ] || return 0
 
   if ! is_true "${SPIRE_DEV_CONTROLLER_MANAGER_RESOLVED}"; then
     # Recorded for k8s_create_entries_with_cli, which runs after the install.

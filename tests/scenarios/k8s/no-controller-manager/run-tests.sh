@@ -21,9 +21,9 @@ export SPIRE_DEV_CONTROLLER_MANAGER=false
 # The helm test depends on the OIDC provider's test-keys pod, which needs an entry
 # the controller-manager would have created, so it cannot run in this mode.
 export SPIRE_DEV_OIDC_DISCOVERY_PROVIDER=false
+# parentID omitted so it defaults to the node alias; see the kind scenario.
 export SPIRE_DEV_ENTRIES="
 - spiffeID: cliapp
-  parentID: spiffe://nocm.test/spire/server
   selectors:
     - k8s:ns:spire-server
     - k8s:pod-label:app:cliapp
@@ -53,6 +53,8 @@ echo "== the entry was created by the CLI"
 ENTRIES="$(kubectl exec -n "${NS}" "${SERVER_POD}" -c spire-server -- spire-server entry show)"
 check_contains "the caller's entry exists" "${ENTRIES}" "spiffe://nocm.test/cliapp"
 check_contains "the selectors were applied" "${ENTRIES}" "pod-label:app:cliapp"
+check_contains "the node alias was created by the CLI too" \
+  "${ENTRIES}" "spiffe://nocm.test/spire-dev-action/agents"
 
 echo
 echo "== re-running is a no-op rather than a failure"

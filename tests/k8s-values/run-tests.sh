@@ -104,6 +104,19 @@ assert_absent() {
   fi
 }
 
+# assert_equals <case> <description> <expected> <actual>
+assert_equals() {
+  local case_name="$1" description="$2" expected="$3" actual="$4"
+  if [ "${expected}" = "${actual}" ]; then
+    echo "ok   ${case_name}: ${description}"
+  else
+    echo "FAIL ${case_name}: ${description}" >&2
+    echo "     expected: ${expected}" >&2
+    echo "     actual:   ${actual}" >&2
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
 # reset_inputs — start each case from the documented defaults.
 reset_inputs() {
   rm -rf "${SPIRE_DEV_WORK_DIR}"
@@ -161,8 +174,33 @@ SPIRE_DEV_ENTRIES="- spiffeID: myapp
   selectors: [k8s:ns:default]"
 export SPIRE_DEV_ENTRIES
 if render entries; then
-  assert_present entries "${WORK}/entries.yaml" "myapp is a ClusterStaticEntry" \
+  f="${WORK}/entries.yaml"
+  assert_present entries "${f}" "myapp is a ClusterStaticEntry" \
     'select(.kind == "ClusterStaticEntry" and (.metadata.name | test("myapp"))) | .metadata.name'
+
+  # A workload entry has to parent on an agent, and under k8s_psat there is no fixed
+  # agent ID to name, so the action creates a node alias and parents entries on it.
+  # Getting this wrong is invisible at render time and only shows up as
+  # "no identity issued" when a workload asks for an SVID, so it is pinned here.
+  assert_present entries "${f}" "the node alias is rendered" \
+    'select(.kind == "ClusterStaticEntry" and (.metadata.name | test("spire-dev-action-agents"))) | .metadata.name'
+  assert_equals entries "the alias selects every agent in the cluster" \
+    "k8s_psat:cluster:test-cluster" \
+    "$(yq 'select(.kind == "ClusterStaticEntry" and (.metadata.name | test("spire-dev-action-agents"))) | .spec.selectors[0]' "${f}")"
+  assert_equals entries "the alias parents on the server" \
+    "spiffe://test.example/spire/server" \
+    "$(yq 'select(.kind == "ClusterStaticEntry" and (.metadata.name | test("spire-dev-action-agents"))) | .spec.parentID' "${f}")"
+  assert_equals entries "myapp parents on the alias, not the server" \
+    "spiffe://test.example/spire-dev-action/agents" \
+    "$(yq 'select(.kind == "ClusterStaticEntry" and (.metadata.name | test("myapp"))) | .spec.parentID' "${f}")"
+fi
+
+echo
+echo "== no entries means no node alias"
+reset_inputs
+if render no-entries; then
+  assert_absent no-entries "${WORK}/no-entries.yaml" "no node alias is rendered" \
+    'select(.kind == "ClusterStaticEntry" and (.metadata.name | test("spire-dev-action-agents"))) | .metadata.name'
 fi
 
 echo

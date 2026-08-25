@@ -18,11 +18,13 @@ export SPIRE_DEV_CLUSTER=kind
 export SPIRE_DEV_CLUSTER_NAME=spire-dev-test
 export SPIRE_DEV_TRUST_DOMAIN=kind.test
 export SPIRE_DEV_NAMESPACE=spire-server
+# No parentID: it defaults to the node alias the action creates, which is what a
+# workload entry has to parent on. Naming the server here instead would create
+# something SPIRE treats as a node alias, and no workload would ever match it.
 export SPIRE_DEV_ENTRIES="
 - spiffeID: myapp
-  parentID: spiffe://kind.test/spire/server
   selectors:
-    - k8s:ns:${SPIRE_DEV_NAMESPACE:-spire-server}
+    - k8s:ns:${SPIRE_DEV_NAMESPACE}
     - k8s:pod-label:app:spire-dev-workload
 "
 
@@ -61,6 +63,8 @@ echo
 echo "== the entries exist"
 ENTRIES="$(kubectl exec -n "${NS}" "${SERVER_POD}" -c spire-server -- spire-server entry show)"
 check_contains "the caller's entry exists" "${ENTRIES}" "spiffe://kind.test/myapp"
+check_contains "the node alias the entry parents on exists" \
+  "${ENTRIES}" "spiffe://kind.test/spire-dev-action/agents"
 if printf '%s' "${ENTRIES}" | grep -qF 'Found 0 entries'; then
   echo "FAIL no entries exist" >&2
   SCENARIO_FAILURES=$((SCENARIO_FAILURES + 1))
