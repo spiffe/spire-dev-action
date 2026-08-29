@@ -1,0 +1,53 @@
+name: 'Collect SPIRE diagnostics'
+description: 'Collects logs and state from a SPIRE deployment made by spire-dev-action, into the run summary and an uploadable artifact. Intended to be run with if: always().'
+
+# A separate action rather than part of the deploy step because a composite action
+# cannot declare a post: hook, so there is no way for the deploy to register
+# cleanup that runs automatically after the caller's own steps.
+
+inputs:
+  mode:
+    description: 'The mode the deployment was made with: host or k8s. Must match the deploy step.'
+    required: true
+  instance:
+    description: 'host mode: the instance name used at deploy time.'
+    required: false
+    default: 'main'
+  namespace:
+    description: 'k8s mode: the namespace used at deploy time.'
+    required: false
+    default: 'spire-server'
+  upload-artifact:
+    description: 'Upload the collected files as a workflow artifact.'
+    required: false
+    default: 'true'
+  artifact-name:
+    description: 'Name for the uploaded artifact. Make it unique when a workflow deploys more than once, since a duplicate name fails the upload.'
+    required: false
+    default: 'spire-dev-action-diagnostics'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Collect diagnostics
+      id: collect
+      shell: bash
+      # Never fails the job: this runs when something has already gone wrong, and
+      # replacing the real error with a diagnostics error would hide it.
+      continue-on-error: true
+      env:
+        SPIRE_DEV_WORK_DIR: ${{ runner.temp }}/spire-dev-action/${{ inputs.mode }}-${{ inputs.instance }}
+        SPIRE_DEV_MODE: ${{ inputs.mode }}
+        SPIRE_DEV_INSTANCE: ${{ inputs.instance }}
+        SPIRE_DEV_NAMESPACE: ${{ inputs.namespace }}
+      run: ${{ github.action_path }}/../scripts/spire-dev.sh diagnostics
+
+    - name: Upload diagnostics
+      if: inputs.upload-artifact == 'true'
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/spire-dev-action/${{ inputs.mode }}-${{ inputs.instance }}/diagnostics
+        if-no-files-found: warn
+        retention-days: 7

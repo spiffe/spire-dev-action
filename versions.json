@@ -1,0 +1,35 @@
+{
+  "comment": [
+    "Pinned versions for everything this action installs. Keys are flattened into",
+    "SPIRE_DEV_<UPPER_SNAKE> environment variables by scripts/lib/versions.sh, and an",
+    "already-set variable of the same name always wins, so any value here can be",
+    "overridden from the environment or by an action input.",
+    "Override the whole file with the versions-file input."
+  ],
+  "spireExamples": {
+    "comment": "Source of the deb/rpm packages used by host mode.",
+    "ref": "main",
+    "listUrl": "https://raw.githubusercontent.com/spiffe/spire-examples/refs/heads/${SPIRE_DEV_SPIRE_EXAMPLES_REF}/examples/debs/${SPIRE_DEV_DEB_ARCH}/spire-examples.list",
+    "packageVersion": ""
+  },
+  "charts": {
+    "comment": "helm-charts-hardened. spire-crds must be installed as its own release first.",
+    "repo": "https://spiffe.github.io/helm-charts-hardened/",
+    "spire": "0.30.0",
+    "spireCrds": "0.6.0"
+  },
+  "kind": {
+    "nodeImage": "kindest/node:v1.34.3"
+  },
+  "timeouts": {
+    "comment": "Seconds, except helm* which are helm duration strings.",
+    "healthcheck": 60,
+    "entry": 90,
+    "jwt": 60,
+    "trustSync": 60,
+    "identityExchange": 120,
+    "rollout": 180,
+    "helm": "10m",
+    "helmTest": "5m"
+  }
+}

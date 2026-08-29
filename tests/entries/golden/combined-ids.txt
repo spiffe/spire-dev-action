@@ -1,0 +1,2 @@
+spiffe://example.test/inline
+spiffe://example.test/from-file

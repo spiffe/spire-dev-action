@@ -1,0 +1,47 @@
+name: 'Tear down SPIRE'
+description: 'Stops and removes a SPIRE deployment made by spire-dev-action. Only needed on a reused self-hosted runner; a disposable runner can skip it.'
+
+# Teardown is opt-in and never automatic. The point of the deploy action is to
+# leave SPIRE running for the steps that follow it, so tearing down by default
+# would remove the deployment before the caller could use it. Composite actions
+# also cannot declare a post: hook, so this has to be an explicit step.
+
+inputs:
+  mode:
+    description: 'The mode the deployment was made with: host or k8s. Must match the deploy step.'
+    required: true
+  instance:
+    description: 'host mode: the instance name used at deploy time.'
+    required: false
+    default: 'main'
+  namespace:
+    description: 'k8s mode: the namespace used at deploy time.'
+    required: false
+    default: 'spire-server'
+  release-name:
+    description: 'k8s mode: the release name used at deploy time.'
+    required: false
+    default: 'spire'
+  cluster:
+    description: 'k8s mode: must match the deploy step. With kind the whole cluster is deleted; with existing only what was installed is removed.'
+    required: false
+    default: 'existing'
+  cluster-name:
+    description: 'k8s mode: the cluster name used at deploy time.'
+    required: false
+    default: 'spire-dev'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Tear down SPIRE
+      shell: bash
+      env:
+        SPIRE_DEV_WORK_DIR: ${{ runner.temp }}/spire-dev-action/${{ inputs.mode }}-${{ inputs.instance }}
+        SPIRE_DEV_MODE: ${{ inputs.mode }}
+        SPIRE_DEV_INSTANCE: ${{ inputs.instance }}
+        SPIRE_DEV_NAMESPACE: ${{ inputs.namespace }}
+        SPIRE_DEV_RELEASE_NAME: ${{ inputs.release-name }}
+        SPIRE_DEV_CLUSTER: ${{ inputs.cluster }}
+        SPIRE_DEV_CLUSTER_NAME: ${{ inputs.cluster-name }}
+      run: ${{ github.action_path }}/../scripts/spire-dev.sh teardown

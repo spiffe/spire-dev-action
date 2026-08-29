@@ -1,0 +1,35 @@
+spire-server:
+  controllerManager:
+    identities:
+      clusterStaticEntries:
+        explicit-name:
+          parentID: spiffe://other.test/spire/server
+          spiffeID: spiffe://other.test/absolute/id
+          selectors:
+            - k8s_psat:namespace:default
+            - k8s_psat:service_account_name:default
+          dnsNames:
+            - myapp.example.test
+            - localhost
+          federatesWith:
+            - other.invalid
+          admin: true
+          downstream: true
+          x509SVIDTTL: 3600s
+          jwtSVIDTTL: 300s
+          hint: primary
+        nested-path-workload:
+          parentID: spiffe://example.test/agent/node1
+          spiffeID: spiffe://example.test/nested/path/workload
+          selectors:
+            - systemd:id:worker@1.service
+          dnsNames:
+            - worker.example.test
+          federatesWith:
+            - spire-ha
+          x509SVIDTTL: 60s
+        svc-api-gateway:
+          parentID: spiffe://example.test/agent/node1
+          spiffeID: spiffe://example.test/svc/api-gateway
+          selectors:
+            - unix:path:/usr/local/bin/api-gateway

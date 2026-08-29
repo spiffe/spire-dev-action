@@ -1,0 +1,20 @@
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterStaticEntry
+metadata:
+  name: explicit-name
+spec:
+  parentID: spiffe://other.test/spire/server
+  spiffeID: spiffe://other.test/absolute/id
+  selectors:
+    - k8s_psat:namespace:default
+    - k8s_psat:service_account_name:default
+  dnsNames:
+    - myapp.example.test
+    - localhost
+  federatesWith:
+    - other.invalid
+  admin: true
+  downstream: true
+  x509SVIDTTL: 3600s
+  jwtSVIDTTL: 300s
+  hint: primary

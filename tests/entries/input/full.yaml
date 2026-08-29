@@ -1,0 +1,32 @@
+# Every supported field, plus the accepted spelling variants and both selector
+# forms, to pin the normalization behavior.
+- name: explicit-name
+  spiffeID: spiffe://other.test/absolute/id
+  parentID: spiffe://other.test/spire/server
+  selectors:
+    - k8s_psat:namespace:default
+    - type: k8s_psat
+      value: service_account_name:default
+  dnsNames:
+    - myapp.example.test
+    - localhost
+  federatesWith:
+    - other.invalid
+  admin: true
+  downstream: true
+  x509SVIDTTL: 3600
+  jwtSVIDTTL: 300
+  hint: primary
+
+# Leading-slash relative ID, snake_case spellings, single selector as a scalar.
+- spiffe_id: /nested/path/workload
+  parent_id: /agent/node1
+  selectors: systemd:id:worker@1.service
+  dns_names: worker.example.test
+  federates_with: spire-ha
+  x509_svid_ttl: 60
+
+# Name derived from a multi-segment path, and a selector value containing colons.
+- spiffeID: svc/api-gateway
+  selectors:
+    - unix:path:/usr/local/bin/api-gateway

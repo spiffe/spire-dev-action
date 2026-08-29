@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "spiffe_id": "spiffe://example.test/stored/workload",
+      "parent_id": "spiffe://example.test/agent/node1",
+      "selectors": [
+        {
+          "type": "unix",
+          "value": "uid:1000"
+        }
+      ],
+      "store_svid": true
+    }
+  ]
+}

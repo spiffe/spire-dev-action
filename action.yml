@@ -1,0 +1,200 @@
+name: 'Deploy SPIRE for testing'
+description: 'Stands up a working SPIRE deployment so a workflow can test an application against it, on a host or in Kubernetes.'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  mode:
+    description: 'Deployment architecture: host (spire-examples debs on the runner, for a raw unix application) or k8s (helm-charts-hardened, for a containerized application).'
+    required: true
+  trust-domain:
+    description: 'SPIFFE trust domain.'
+    required: false
+    default: 'example.org'
+  entries:
+    description: 'Registration entries as an inline YAML list. Each item needs spiffeID and selectors; parentID, dnsNames, federatesWith, admin, downstream, x509SVIDTTL, jwtSVIDTTL and hint are optional. A spiffeID without a scheme is taken as a path under the trust domain. See README.md.'
+    required: false
+    default: ''
+  entries-file:
+    description: 'Path to a YAML or JSON file holding the same list as the entries input. May be combined with it.'
+    required: false
+    default: ''
+  manifests-dir:
+    description: 'Directory of ClusterStaticEntry (and, in k8s mode, ClusterSPIFFEID) manifests to install as-is. Requires the controller-manager, and turns it on when controller-manager is auto.'
+    required: false
+    default: ''
+  controller-manager:
+    description: 'Whether to run spire-controller-manager in static manifest mode: true, false, or auto. In host mode auto means on only if manifests-dir is set, otherwise entries are created with the spire-server CLI. In k8s mode auto means on, matching the chart default.'
+    required: false
+    default: 'auto'
+  oidc-discovery-provider:
+    description: 'Deploy the SPIFFE OIDC Discovery Provider, for verifying JWT-SVIDs outside SPIRE. Defaults to true in k8s mode (the chart enables it and its helm test uses it) and false in host mode.'
+    required: false
+    default: ''
+  identity-exchange:
+    description: 'Deploy spire-identity-exchange, which exchanges an external credential such as a GitHub Actions OIDC token for an SVID.'
+    required: false
+    default: 'false'
+  identity-exchange-config:
+    description: 'Path to a spire-identity-exchange config file, replacing the default. The default runs the exchange with every auth plugin disabled, so enabling one (for example github) requires supplying a config.'
+    required: false
+    default: ''
+
+  # --- host mode -----------------------------------------------------------
+  instance:
+    description: 'host mode: systemd instance name, which appears in unit names and socket paths.'
+    required: false
+    default: 'main'
+  node-id:
+    description: 'host mode: the last path element of the agent SPIFFE ID, spiffe://<trust-domain>/agent/<node-id>. This is the default parent for entries.'
+    required: false
+    default: 'node1'
+  bind-address:
+    description: 'host mode: SPIRE server bind address.'
+    required: false
+    default: '0.0.0.0'
+  bind-port:
+    description: 'host mode: SPIRE server bind port.'
+    required: false
+    default: '8081'
+  oidc-port:
+    description: 'host mode: port the OIDC discovery provider listens on, over plain HTTP on the loopback interface.'
+    required: false
+    default: '8181'
+  workload-attestors:
+    description: 'host mode: extra agent workload attestors to enable, as a comma- or newline-separated list of names. Each becomes a WorkloadAttestor block with no plugin_data, so only attestors needing no configuration can be named this way; the rest go in agent-extra-plugins. Added to the systemd and unix attestors the agent always has, not a replacement for them. Known names: docker, slurm, systemd, unix.'
+    required: false
+    default: ''
+  agent-extra-plugins:
+    description: 'host mode: raw HCL appended inside the agent config plugins block, for a plugin that needs plugin_data. Not validated beyond the config being parseable.'
+    required: false
+    default: ''
+  allow-host-modification:
+    description: 'host mode: required to run outside CI. Host mode installs packages, writes under /etc and starts services, and does not clean up after itself, so it must only be pointed at a disposable machine.'
+    required: false
+    default: 'false'
+
+  # --- k8s mode ------------------------------------------------------------
+  cluster:
+    description: 'k8s mode: existing (use the current kubectl context) or kind (create a cluster).'
+    required: false
+    default: 'existing'
+  cluster-name:
+    description: 'k8s mode: the kind cluster name, and the clusterName SPIRE is configured with.'
+    required: false
+    default: 'spire-dev'
+  k8s-version:
+    description: 'k8s mode: Kubernetes version for a created kind cluster, for example v1.34.3. Defaults to the pinned version in versions.json.'
+    required: false
+    default: ''
+  namespace:
+    description: 'k8s mode: namespace to install into.'
+    required: false
+    default: 'spire-server'
+  release-name:
+    description: 'k8s mode: helm release name. The CRDs are installed as <release-name>-crds.'
+    required: false
+    default: 'spire'
+  values:
+    description: 'k8s mode: extra helm values, applied last so they override everything else. One path per line, or inline YAML.'
+    required: false
+    default: ''
+
+  # --- general -------------------------------------------------------------
+  log-level:
+    description: 'SPIRE log level.'
+    required: false
+    default: 'DEBUG'
+  versions-file:
+    description: 'Path to a versions.json replacing the pinned package, chart and node image versions.'
+    required: false
+    default: ''
+
+outputs:
+  trust-domain:
+    description: 'The trust domain SPIRE was deployed with.'
+    value: ${{ steps.deploy.outputs.trust-domain }}
+  agent-socket-path:
+    description: 'host mode: path to the agent workload API socket. Also exported as SPIFFE_ENDPOINT_SOCKET for later steps.'
+    value: ${{ steps.deploy.outputs.agent-socket-path }}
+  server-socket-path:
+    description: 'host mode: path to the server API socket, for spire-server CLI calls. Requires root: SPIRE creates this socket directory root-owned and mode 0750, so an unprivileged process cannot stat it.'
+    value: ${{ steps.deploy.outputs.server-socket-path }}
+  admin-socket-path:
+    description: 'host mode: path to the agent admin socket, for the delegated identity API.'
+    value: ${{ steps.deploy.outputs.admin-socket-path }}
+  agent-spiffe-id:
+    description: 'host mode: the agent SPIFFE ID, which is the default parent of entries.'
+    value: ${{ steps.deploy.outputs.agent-spiffe-id }}
+  namespace:
+    description: 'k8s mode: namespace SPIRE was installed into.'
+    value: ${{ steps.deploy.outputs.namespace }}
+  release-name:
+    description: 'k8s mode: the helm release name.'
+    value: ${{ steps.deploy.outputs.release-name }}
+  csi-driver-name:
+    description: 'k8s mode: CSI driver name to mount the workload API socket into a pod.'
+    value: ${{ steps.deploy.outputs.csi-driver-name }}
+  server-pod:
+    description: 'k8s mode: name of the SPIRE server pod, for spire-server CLI calls via kubectl exec.'
+    value: ${{ steps.deploy.outputs.server-pod }}
+  kubeconfig:
+    description: 'k8s mode: path to the kubeconfig, when this action created the cluster.'
+    value: ${{ steps.deploy.outputs.kubeconfig }}
+  oidc-discovery-url:
+    description: 'Base URL of the OIDC discovery provider, or empty when it is disabled.'
+    value: ${{ steps.deploy.outputs.oidc-discovery-url }}
+  identity-exchange-rest-url:
+    description: 'host mode: base URL of the spire-identity-exchange REST listener.'
+    value: ${{ steps.deploy.outputs.identity-exchange-rest-url }}
+  identity-exchange-grpc-url:
+    description: 'host mode: base URL of the spire-identity-exchange gRPC listener.'
+    value: ${{ steps.deploy.outputs.identity-exchange-grpc-url }}
+  identity-exchange-ca-file:
+    description: 'host mode: the self-signed certificate the exchange serves, to pass as a CA bundle when connecting to it.'
+    value: ${{ steps.deploy.outputs.identity-exchange-ca-file }}
+  bundle-file:
+    description: 'Path to the trust bundle in PEM form, for verifying SVIDs out of band.'
+    value: ${{ steps.deploy.outputs.bundle-file }}
+  work-dir:
+    description: 'Directory holding everything this action generated. Pass it to the diagnostics and teardown actions.'
+    value: ${{ steps.deploy.outputs.work-dir }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Deploy SPIRE
+      id: deploy
+      shell: bash
+      # A stable work dir keyed on the mode and instance, rather than the default
+      # $$-based one, so the diagnostics and teardown actions can find what this
+      # step generated without the caller having to thread an output through.
+      env:
+        SPIRE_DEV_WORK_DIR: ${{ runner.temp }}/spire-dev-action/${{ inputs.mode }}-${{ inputs.instance }}
+        SPIRE_DEV_MODE: ${{ inputs.mode }}
+        SPIRE_DEV_TRUST_DOMAIN: ${{ inputs.trust-domain }}
+        SPIRE_DEV_ENTRIES: ${{ inputs.entries }}
+        SPIRE_DEV_ENTRIES_FILE: ${{ inputs.entries-file }}
+        SPIRE_DEV_MANIFESTS_DIR: ${{ inputs.manifests-dir }}
+        SPIRE_DEV_CONTROLLER_MANAGER: ${{ inputs.controller-manager }}
+        SPIRE_DEV_OIDC_DISCOVERY_PROVIDER: ${{ inputs.oidc-discovery-provider }}
+        SPIRE_DEV_IDENTITY_EXCHANGE: ${{ inputs.identity-exchange }}
+        SPIRE_DEV_IDENTITY_EXCHANGE_CONFIG: ${{ inputs.identity-exchange-config }}
+        SPIRE_DEV_INSTANCE: ${{ inputs.instance }}
+        SPIRE_DEV_NODE_ID: ${{ inputs.node-id }}
+        SPIRE_DEV_BIND_ADDRESS: ${{ inputs.bind-address }}
+        SPIRE_DEV_BIND_PORT: ${{ inputs.bind-port }}
+        SPIRE_DEV_OIDC_PORT: ${{ inputs.oidc-port }}
+        SPIRE_DEV_WORKLOAD_ATTESTORS: ${{ inputs.workload-attestors }}
+        SPIRE_DEV_AGENT_EXTRA_PLUGINS: ${{ inputs.agent-extra-plugins }}
+        SPIRE_DEV_ALLOW_HOST_MODIFICATION: ${{ inputs.allow-host-modification }}
+        SPIRE_DEV_CLUSTER: ${{ inputs.cluster }}
+        SPIRE_DEV_CLUSTER_NAME: ${{ inputs.cluster-name }}
+        SPIRE_DEV_K8S_VERSION: ${{ inputs.k8s-version }}
+        SPIRE_DEV_NAMESPACE: ${{ inputs.namespace }}
+        SPIRE_DEV_RELEASE_NAME: ${{ inputs.release-name }}
+        SPIRE_DEV_VALUES: ${{ inputs.values }}
+        SPIRE_DEV_LOG_LEVEL: ${{ inputs.log-level }}
+        SPIRE_DEV_VERSIONS_FILE: ${{ inputs.versions-file }}
+      run: ${{ github.action_path }}/scripts/spire-dev.sh deploy
