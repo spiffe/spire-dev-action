@@ -191,6 +191,140 @@ config_has "${six_conf}" '^[[:space:]]*NodeAttestor "x509pop"' &&
   fail "agent-six: x509pop NodeAttestor missing"
 
 echo
+echo "== the plugins marker appears exactly once per template"
+
+# The templates' own header comments say the marker is "deliberately not written
+# out here a second time". That is what makes whole-line matching safe, and it was
+# only a convention: the original bug was a comment mentioning the marker, which a
+# substring match then substituted, putting plugin blocks at top level outside
+# plugins {}. Counting occurrences enforces the convention instead of trusting it.
+for template in server agent; do
+  f="${SPIRE_DEV_ROOT}/conf/host/${template}.conf"
+  n="$(grep -c '@@EXTRA_PLUGINS@@' "${f}" || true)"
+  [ "${n}" -eq 1 ] &&
+    ok "${template}.conf: the plugins marker appears exactly once" ||
+    fail "${template}.conf: the plugins marker appears ${n} time(s), want 1 (a second one, in a comment, is how plugin blocks escaped plugins {})"
+done
+
+echo
+echo "== agent workload attestors and extra plugins"
+
+# render_agent <label> <workload-attestors> <agent-extra-plugins> — render and echo
+# the path, so each case below is one line of setup.
+render_agent() {
+  local label="$1"
+  local out="${WORK}/agent-attestors-${label}.conf"
+  SPIRE_DEV_WORKLOAD_ATTESTORS="$2" SPIRE_DEV_AGENT_EXTRA_PLUGINS="$3" \
+    SPIRE_DEV_IDENTITY_EXCHANGE=false render_agent_config >"${out}" 2>/dev/null
+  echo "${out}"
+}
+
+# attestor_count <file> <name> — configured WorkloadAttestor blocks for a name.
+attestor_count() {
+  count_matches "^[[:space:]]*WorkloadAttestor \"$2\"" "$1"
+}
+
+# The defaults must survive every case below; an added attestor that displaced
+# them would break every existing consumer.
+check_defaults_intact() {
+  local label="$1" file="$2" n
+  for name in systemd unix; do
+    n="$(attestor_count "${file}" "${name}")"
+    [ "${n}" -eq 1 ] && ok "${label}: exactly one ${name} attestor" ||
+      fail "${label}: expected 1 ${name} attestor, found ${n}"
+  done
+}
+
+# --- no inputs: the marker must not survive into the installed config ---------
+out="$(render_agent none "" "")"
+check_hcl_balanced "agent (no extras)" "${out}"
+check_defaults_intact "agent (no extras)" "${out}"
+if grep -q '@@' "${out}"; then
+  fail "agent (no extras): an unreplaced marker survived"
+  grep -n '@@' "${out}" | sed 's/^/     /' >&2
+else
+  ok "agent (no extras): no unreplaced markers"
+fi
+
+# --- one attestor -------------------------------------------------------------
+out="$(render_agent one "slurm" "")"
+check_hcl_balanced "agent (slurm)" "${out}"
+check_defaults_intact "agent (slurm)" "${out}"
+[ "$(attestor_count "${out}" slurm)" -eq 1 ] &&
+  ok "agent (slurm): the named attestor is configured" ||
+  fail "agent (slurm): slurm attestor missing"
+
+# --- several, in both spellings a YAML input can produce ----------------------
+out="$(render_agent many "slurm, docker" "")"
+check_hcl_balanced "agent (comma list)" "${out}"
+for name in slurm docker; do
+  [ "$(attestor_count "${out}" "${name}")" -eq 1 ] &&
+    ok "agent (comma list): ${name} configured" ||
+    fail "agent (comma list): ${name} missing"
+done
+
+out="$(render_agent newlines "$(printf 'slurm\ndocker\n')" "")"
+for name in slurm docker; do
+  [ "$(attestor_count "${out}" "${name}")" -eq 1 ] &&
+    ok "agent (newline list): ${name} configured" ||
+    fail "agent (newline list): ${name} missing"
+done
+
+# --- a built-in name must not be emitted twice --------------------------------
+# SPIRE rejects a duplicated plugin, so listing one the template already has is
+# skipped rather than repeated.
+out="$(render_agent builtin "unix,slurm" "")"
+check_hcl_balanced "agent (built-in named)" "${out}"
+check_defaults_intact "agent (built-in named)" "${out}"
+[ "$(attestor_count "${out}" slurm)" -eq 1 ] &&
+  ok "agent (built-in named): slurm still added alongside" ||
+  fail "agent (built-in named): slurm missing"
+
+# The skip notice is written by log_info, which prints to stdout. Emitting it on
+# the stream that becomes the config put a bare sentence inside plugins {}.
+if config_has "${out}" 'enabled by default'; then
+  fail "agent (built-in named): a log line was rendered into the config"
+else
+  ok "agent (built-in named): no log output in the config"
+fi
+
+# --- raw extra plugins --------------------------------------------------------
+extra_hcl='WorkloadAttestor "k8s" {
+    plugin_data {
+        skip_kubelet_verification = true
+    }
+}'
+out="$(render_agent extra "" "${extra_hcl}")"
+check_hcl_balanced "agent (extra plugins)" "${out}"
+check_defaults_intact "agent (extra plugins)" "${out}"
+config_has "${out}" '^[[:space:]]*skip_kubelet_verification = true' &&
+  ok "agent (extra plugins): the raw HCL is present" ||
+  fail "agent (extra plugins): the raw HCL is missing"
+
+# --- both together ------------------------------------------------------------
+out="$(render_agent both "slurm" "${extra_hcl}")"
+check_hcl_balanced "agent (both)" "${out}"
+check_defaults_intact "agent (both)" "${out}"
+[ "$(attestor_count "${out}" slurm)" -eq 1 ] &&
+  ok "agent (both): the named attestor is configured" ||
+  fail "agent (both): slurm attestor missing"
+config_has "${out}" '^[[:space:]]*skip_kubelet_verification = true' &&
+  ok "agent (both): the raw HCL is present" ||
+  fail "agent (both): the raw HCL is missing"
+
+# --- everything added must land inside plugins {} ------------------------------
+# This is the bug the marker replacement is whole-line for: a stanza emitted at
+# top level is valid HCL on its own and only wrong in where it landed.
+for label in one many builtin extra both; do
+  f="${WORK}/agent-attestors-${label}.conf"
+  [ -f "${f}" ] || continue
+  n="$(count_at_depth_zero "${f}" '^[[:space:]]*WorkloadAttestor[[:space:]]')"
+  [ "${n}" -eq 0 ] &&
+    ok "agent (${label}): no WorkloadAttestor at top level" ||
+    fail "agent (${label}): ${n} WorkloadAttestor(s) at top level, outside plugins {}"
+done
+
+echo
 if [ "${FAILURES}" -ne 0 ]; then
   echo "${FAILURES} check(s) failed" >&2
   exit 1

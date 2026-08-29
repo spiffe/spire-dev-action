@@ -178,6 +178,16 @@ deb_arch() {
   esac
 }
 
+# split_list <value> — the entries of a comma- or newline-separated list, one per
+# line, with surrounding whitespace stripped and empties dropped.
+#
+# A YAML action input can spell the same list either way: `a, b` on one line or a
+# block scalar with one entry per line. Both reach the script as a single string,
+# so both are accepted rather than making the caller guess which one works.
+split_list() {
+  printf '%s' "$1" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' || true
+}
+
 # trust_domain_path <spiffe-id> — the path portion of a SPIFFE ID, or empty.
 trust_domain_path() {
   printf '%s' "${1#spiffe://*/}"

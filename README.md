@@ -4,7 +4,7 @@
 [![Development Phase](https://github.com/spiffe/spiffe/blob/main/.img/maturity/dev.svg)](https://github.com/spiffe/spiffe/blob/main/MATURITY.md#development)
 
 A GitHub Action that stands up a working [SPIRE](https://spiffe.io/) deployment so a
-workflow can test an application against real SPIFFE identities.
+workflow can test an application against real SPIFFE identities and APIs.
 
 It supports two deployment architectures, so the test environment can match how the
 application actually runs:
@@ -12,7 +12,7 @@ application actually runs:
 | `mode` | What it deploys | For |
 |---|---|---|
 | `host` | SPIRE server, agent and optional components from the [spire-examples](https://github.com/spiffe/spire-examples) deb packages, under systemd on the runner | a raw unix application |
-| `k8s` | The [helm-charts-hardened](https://github.com/spiffe/helm-charts-hardened) charts, into an existing cluster or a kind cluster it creates | a containerized Kubernetes application |
+| `k8s` | The [helm-charts-hardened](https://github.com/spiffe/helm-charts-hardened) charts, into an existing cluster or a kind cluster this action can create | a containerized Kubernetes application |
 
 The deployment is left running for the steps that follow, and the action exports
 `SPIFFE_ENDPOINT_SOCKET`, so an application built on any SPIFFE library usually needs
@@ -224,6 +224,52 @@ To check by hand what a given unit would be issued:
 ```bash
 sudo systemd-run --wait --pipe --unit=myapp spire-agent api fetch jwt -audience test
 ```
+
+### Other workload attestors
+
+`systemd` and `unix` are always enabled. Anything else the application needs to be
+identified by — a Slurm job, a container — is turned on with `workload-attestors`,
+a comma- or newline-separated list of names:
+
+```yaml
+- uses: spiffe/spire-dev-action@v1
+  with:
+    mode: host
+    workload-attestors: slurm
+    entries: |
+      - spiffeID: hpc-job
+        selectors: [slurm:job_id:12345]
+```
+
+A bare name expands to a plugin block with no `plugin_data`, so only attestors that
+need no configuration can be named this way. The names are checked against a list of
+those that qualify (`docker`, `slurm`, `systemd`, `unix`) — a misspelling fails the
+deployment rather than producing an agent that starts cleanly and then never matches
+the workload.
+
+For an attestor that does need configuration, `agent-extra-plugins` takes raw HCL and
+appends it to the agent's `plugins` block:
+
+```yaml
+- uses: spiffe/spire-dev-action@v1
+  with:
+    mode: host
+    agent-extra-plugins: |
+      WorkloadAttestor "docker" {
+          plugin_data {
+              docker_socket_path = "unix:///var/run/docker.sock"
+          }
+      }
+```
+
+Both are host mode only; in k8s mode the agent's attestors come from the chart, so
+set them through `values`. Naming an attestor that is already enabled is a no-op
+rather than an error.
+
+Enabling an attestor is not the same as it matching anything. The action checks that
+the plugin loads — an unknown plugin name is fatal at agent startup — but whether it
+produces the selectors an entry was written against depends on the environment the
+workload actually runs in.
 
 ## Optional components
 

@@ -80,6 +80,28 @@ _write_server_config() {
   render_server_config | write_root_file "$(server_config "${instance}")"
 }
 
+# render_with_extra_plugins <template> <extra-file> — the template to stdout with
+# the plugins marker replaced by the contents of extra-file.
+#
+# The marker is replaced rather than appended to: sed's 'r' would leave the marker
+# line itself in the installed file.
+#
+# Matched as a whole line, not as a substring. The template's own header comment
+# names the marker to explain it, and a substring match hit that line too --
+# injecting the plugin blocks at top level, outside plugins {}, which is invalid
+# HCL and stops the server from starting at all.
+render_with_extra_plugins() {
+  local template="$1" extra="$2"
+
+  awk -v extrafile="${extra}" '
+    $0 == "@@EXTRA_PLUGINS@@" {
+      while ((getline line < extrafile) > 0) print line
+      next
+    }
+    { print }
+  ' "${template}"
+}
+
 # render_server_config — the server config for the enabled components, to stdout.
 #
 # Separate from _write_server_config so it can be rendered and inspected without
@@ -130,20 +152,7 @@ render_server_config() {
 EOF
   fi
 
-  # The marker is replaced rather than appended to: sed's 'r' would leave the
-  # marker line itself in the installed file.
-  #
-  # Matched as a whole line, not as a substring. The template's own header comment
-  # names the marker to explain it, and a substring match hit that line too --
-  # injecting the plugin blocks at top level, outside plugins {}, which is invalid
-  # HCL and stops the server from starting at all.
-  awk -v extrafile="${extra}" '
-    $0 == "@@EXTRA_PLUGINS@@" {
-      while ((getline line < extrafile) > 0) print line
-      next
-    }
-    { print }
-  ' "${template}"
+  render_with_extra_plugins "${template}" "${extra}"
 }
 
 _write_agent_config() {
@@ -151,9 +160,59 @@ _write_agent_config() {
   render_agent_config | write_root_file "$(agent_config "${instance}")"
 }
 
+# AGENT_BUILTIN_WORKLOAD_ATTESTORS — the attestors conf/host/agent.conf already
+# configures. A name repeated here would be emitted twice, and SPIRE rejects a
+# duplicated plugin, so these are skipped rather than re-emitted.
+AGENT_BUILTIN_WORKLOAD_ATTESTORS="systemd unix"
+
+# agent_workload_attestor_stanzas — one plugin block per name in
+# SPIRE_DEV_WORKLOAD_ATTESTORS, to stdout.
+#
+# Only attestors that take no configuration can be expressed this way; anything
+# needing plugin_data goes through agent-extra-plugins instead. The names have
+# already been checked against the allowlist by validate_inputs, so an unknown one
+# cannot reach here.
+#
+# stdout is config, so the skip notice goes to stderr. log_info writes to stdout,
+# and letting it do so here put a bare sentence inside plugins {} -- config the
+# agent then refused to parse.
+agent_workload_attestor_stanzas() {
+  local name
+  while IFS= read -r name; do
+    case " ${AGENT_BUILTIN_WORKLOAD_ATTESTORS} " in
+    *" ${name} "*)
+      log_info "workload attestor '${name}' is enabled by default; not adding it twice" >&2
+      continue
+      ;;
+    esac
+    cat <<EOF
+
+    WorkloadAttestor "${name}" {
+        plugin_data {}
+    }
+EOF
+  done < <(split_list "${SPIRE_DEV_WORKLOAD_ATTESTORS:-}")
+}
+
 # render_agent_config — the agent config for the enabled components, to stdout.
+#
+# Separate from _write_agent_config so it can be rendered and inspected without
+# root; tests/host-config exercises it directly.
 render_agent_config() {
   local template="${SPIRE_DEV_ROOT}/conf/host/agent.conf"
+  local extra
+  extra="$(work_dir)/agent-extra-plugins.conf"
+
+  : >"${extra}"
+
+  agent_workload_attestor_stanzas >>"${extra}"
+
+  # Appended verbatim. The caller owns the correctness of this HCL; the config
+  # tests check only that it lands inside plugins {} and leaves the braces
+  # balanced.
+  if [ -n "${SPIRE_DEV_AGENT_EXTRA_PLUGINS:-}" ]; then
+    printf '\n%s\n' "${SPIRE_DEV_AGENT_EXTRA_PLUGINS}" >>"${extra}"
+  fi
 
   # authorized_delegates gates who may use the agent's delegated identity API.
   # Empty unless something that needs it is enabled, so nothing is granted a
@@ -163,7 +222,8 @@ render_agent_config() {
     delegates="\"spiffe://\${SPIFFE_TRUST_DOMAIN}/service/spire-identity-exchange\""
   fi
 
-  sed "s|@@AUTHORIZED_DELEGATES@@|${delegates}|" "${template}"
+  render_with_extra_plugins "${template}" "${extra}" |
+    sed "s|@@AUTHORIZED_DELEGATES@@|${delegates}|"
 }
 
 # host_write_join_token <instance> <parent-spiffe-id>

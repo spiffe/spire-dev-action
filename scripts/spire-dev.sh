@@ -56,6 +56,8 @@ apply_defaults() {
   : "${SPIRE_DEV_OIDC_DISCOVERY_PROVIDER:=}"
   : "${SPIRE_DEV_IDENTITY_EXCHANGE:=false}"
   : "${SPIRE_DEV_ALLOW_HOST_MODIFICATION:=false}"
+  : "${SPIRE_DEV_WORKLOAD_ATTESTORS:=}"
+  : "${SPIRE_DEV_AGENT_EXTRA_PLUGINS:=}"
 
   # host mode
   : "${SPIRE_DEV_INSTANCE:=main}"
@@ -89,7 +91,8 @@ apply_defaults() {
   export SPIRE_DEV_TRUST_DOMAIN SPIRE_DEV_LOG_LEVEL SPIRE_DEV_ENTRIES \
     SPIRE_DEV_ENTRIES_FILE SPIRE_DEV_MANIFESTS_DIR SPIRE_DEV_CONTROLLER_MANAGER \
     SPIRE_DEV_OIDC_DISCOVERY_PROVIDER SPIRE_DEV_IDENTITY_EXCHANGE \
-    SPIRE_DEV_ALLOW_HOST_MODIFICATION SPIRE_DEV_INSTANCE SPIRE_DEV_NODE_ID \
+    SPIRE_DEV_ALLOW_HOST_MODIFICATION SPIRE_DEV_WORKLOAD_ATTESTORS \
+    SPIRE_DEV_AGENT_EXTRA_PLUGINS SPIRE_DEV_INSTANCE SPIRE_DEV_NODE_ID \
     SPIRE_DEV_BIND_ADDRESS SPIRE_DEV_BIND_PORT SPIRE_DEV_SERVER_ADDRESS \
     SPIRE_DEV_OIDC_PORT SPIRE_DEV_CONTROLLER_MANAGER_METRICS_ADDRESS \
     SPIRE_DEV_CONTROLLER_MANAGER_HEALTH_ADDRESS SPIRE_DEV_CLUSTER \
@@ -99,6 +102,45 @@ apply_defaults() {
     SPIRE_DEV_SIX_PURPOSE_MODE SPIRE_DEV_SIX_METRICS_PORT SPIRE_DEV_SIX_SVID_TTL \
     SPIRE_DEV_SIX_TLS_GRPC_PORT SPIRE_DEV_SIX_TLS_REST_PORT \
     SPIRE_DEV_SIX_SPIFFE_GRPC_PORT SPIRE_DEV_SIX_SPIFFE_REST_PORT
+}
+
+# AGENT_WORKLOAD_ATTESTOR_ALLOWLIST — the workload attestors that can be named in
+# the workload-attestors input.
+#
+# Deliberately restricted to attestors that need no plugin_data, because that is
+# all a bare name can express. It is an allowlist rather than a passthrough so a
+# typo fails here: SPIRE will not start on an unknown plugin name, but "slrum"
+# silently spelled as an unchecked passthrough would instead produce an agent that
+# starts cleanly and then never matches the workload -- the exact class of
+# failure this action exists to make impossible. Anything needing configuration
+# goes through agent-extra-plugins.
+AGENT_WORKLOAD_ATTESTOR_ALLOWLIST="docker slurm systemd unix"
+
+# validate_agent_plugins — check the agent plugin inputs.
+validate_agent_plugins() {
+  if [ "${SPIRE_DEV_MODE}" = "k8s" ]; then
+    if [ -n "${SPIRE_DEV_WORKLOAD_ATTESTORS}" ]; then
+      log_fail "workload-attestors is host mode only; in k8s mode set the agent's" \
+        "workloadAttestors through the values input"
+    fi
+    if [ -n "${SPIRE_DEV_AGENT_EXTRA_PLUGINS}" ]; then
+      log_fail "agent-extra-plugins is host mode only; in k8s mode configure the" \
+        "agent through the values input"
+    fi
+    return 0
+  fi
+
+  local name
+  while IFS= read -r name; do
+    case " ${AGENT_WORKLOAD_ATTESTOR_ALLOWLIST} " in
+    *" ${name} "*) ;;
+    *)
+      log_fail "workload-attestors: '${name}' is not a known no-configuration" \
+        "attestor (${AGENT_WORKLOAD_ATTESTOR_ALLOWLIST}); an attestor needing" \
+        "plugin_data goes in agent-extra-plugins instead"
+      ;;
+    esac
+  done < <(split_list "${SPIRE_DEV_WORKLOAD_ATTESTORS}")
 }
 
 # validate_inputs — reject contradictions up front, so a caller sees the problem
@@ -134,6 +176,8 @@ validate_inputs() {
     grep -qE '^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$'; then
     log_fail "trust-domain '${SPIRE_DEV_TRUST_DOMAIN}' is not a valid trust domain name"
   fi
+
+  validate_agent_plugins
 
   if [ -n "${SPIRE_DEV_ENTRIES_FILE}" ] && [ ! -f "${SPIRE_DEV_ENTRIES_FILE}" ]; then
     log_fail "entries-file does not exist: ${SPIRE_DEV_ENTRIES_FILE}"

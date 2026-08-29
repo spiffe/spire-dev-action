@@ -62,6 +62,14 @@ inputs:
     description: 'host mode: port the OIDC discovery provider listens on, over plain HTTP on the loopback interface.'
     required: false
     default: '8181'
+  workload-attestors:
+    description: 'host mode: extra agent workload attestors to enable, as a comma- or newline-separated list of names. Each becomes a WorkloadAttestor block with no plugin_data, so only attestors needing no configuration can be named this way; the rest go in agent-extra-plugins. Added to the systemd and unix attestors the agent always has, not a replacement for them. Known names: docker, slurm, systemd, unix.'
+    required: false
+    default: ''
+  agent-extra-plugins:
+    description: 'host mode: raw HCL appended inside the agent config plugins block, for a plugin that needs plugin_data. Not validated beyond the config being parseable.'
+    required: false
+    default: ''
   allow-host-modification:
     description: 'host mode: required to run outside CI. Host mode installs packages, writes under /etc and starts services, and does not clean up after itself, so it must only be pointed at a disposable machine.'
     required: false
@@ -178,6 +186,8 @@ runs:
         SPIRE_DEV_BIND_ADDRESS: ${{ inputs.bind-address }}
         SPIRE_DEV_BIND_PORT: ${{ inputs.bind-port }}
         SPIRE_DEV_OIDC_PORT: ${{ inputs.oidc-port }}
+        SPIRE_DEV_WORKLOAD_ATTESTORS: ${{ inputs.workload-attestors }}
+        SPIRE_DEV_AGENT_EXTRA_PLUGINS: ${{ inputs.agent-extra-plugins }}
         SPIRE_DEV_ALLOW_HOST_MODIFICATION: ${{ inputs.allow-host-modification }}
         SPIRE_DEV_CLUSTER: ${{ inputs.cluster }}
         SPIRE_DEV_CLUSTER_NAME: ${{ inputs.cluster-name }}

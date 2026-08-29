@@ -120,6 +120,11 @@ jobs:
         with:
           mode: host
           trust-domain: action.test
+          workload-attestors: slurm
+          agent-extra-plugins: |
+            WorkloadAttestor "docker" {
+                plugin_data {}
+            }
           entries: |
             - spiffeID: consumer
               selectors:
@@ -159,6 +164,23 @@ jobs:
             | jq -r '.[0].svids[0].spiffe_id')"
           [ "${ID}" = "spiffe://action.test/consumer" ] || { echo "::error::got ${ID}"; exit 1; }
           echo "the workload was issued ${ID}"
+
+      - name: the agent plugin inputs reached the agent config
+        # The scenario tests call scripts/spire-dev.sh directly, so this is the
+        # only place the input-to-env wiring for these two is exercised.
+        run: |
+          set -eu
+          CONF="$(sudo cat /etc/spire/agent/main.conf)"
+          for want in 'WorkloadAttestor "slurm"' 'WorkloadAttestor "docker"' \
+            'WorkloadAttestor "systemd"' 'WorkloadAttestor "unix"'; do
+            printf '%s' "${CONF}" | grep -qF "${want}" ||
+              { echo "::error::missing from the agent config: ${want}"; exit 1; }
+          done
+          if printf '%s' "${CONF}" | grep -q '@@'; then
+            echo "::error::an unreplaced marker survived into the agent config"
+            exit 1
+          fi
+          echo "the extra attestors reached the agent config"
 
       - name: collect diagnostics
         if: always()
